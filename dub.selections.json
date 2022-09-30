@@ -1,0 +1,13 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"boilerplate": "1.7.7",
+		"dshould": "1.7.0",
+		"dxml": "0.4.3",
+		"dyaml": "0.9.2",
+		"prettyprint": "1.0.8",
+		"serialized": "1.6.3",
+		"tinyendian": "0.2.0",
+		"unit-threaded": "2.1.2"
+	}
+}

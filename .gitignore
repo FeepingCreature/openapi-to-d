@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/openapi-d
+openapi-d.so
+openapi-d.dylib
+openapi-d.dll
+openapi-d.a
+openapi-d.lib
+openapi-d-test-*
+*.exe
+*.o
+*.obj
+*.lst

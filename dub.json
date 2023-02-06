@@ -4,11 +4,11 @@
 	],
 	"copyright": "Copyright © 2022, Mathis Beer",
 	"dependencies": {
-		"boilerplate": "~>1.7.7",
-		"dyaml": "~>0.9.2",
-		"serialized": "~>1.6.3"
+		"boilerplate": ">=1.7.7",
+		"dyaml": ">=0.9.2",
+		"serialized": ">=1.6.3"
 	},
 	"description": "Convert OpenAPI documentation to Boilerplated D/DTO headers",
 	"license": "proprietary",
-	"name": "openapi-d"
+	"name": "openapi-to-d"
 }

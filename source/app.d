@@ -1,5 +1,6 @@
 module app;
 
+import argparse;
 import boilerplate;
 import dyaml;
 import std.algorithm;
@@ -14,27 +15,265 @@ import std.typecons;
 import std.utf;
 import text.json.Decode;
 
-void main(string[] args)
+@(Command.Description("Convert OpenAPI specification to serialized-ready D structs"))
+struct Arguments
 {
-    assert(args.length == 2);
+    @(PositionalArgument(0).Description("OpenAPI input file"))
+    string input;
+
+    @(NamedArgument.Required.Description("Output file that will be written"))
+    string output;
+
+    // often invariants are not easily expressed in OpenAPI.
+    @(NamedArgument("bonus-invariant").Description("Inject an additional invariant into the type"))
+    string[] bonusInvariants;
+
+    @(NamedArgument.Description("Types that will be generated"))
+    string[] type;
+}
+
+mixin CLI!Arguments.main!((const Arguments arguments)
+{
     auto loader = new SchemaLoader;
-    string[] imports;
-    string[] structs;
-    foreach (key, value; loader.load(args[1]).schemas)
+    auto outputFile = File(arguments.output, "w");
+    auto moduleName = arguments.output
+        .stripExtension
+        .split("/")
+        .removeLeading("src")
+        .removeLeading("export")
+        .join(".");
+
+    auto schemas = loader.load(arguments.input).schemas;
+    const string[] types = arguments.type.empty ? [moduleName.split(".").back] : arguments.type;
+    auto render = new Render(types, arguments.decodeInvariantArgs);
+
+    foreach (name; types)
     {
+        auto match = schemas
+            .keys
+            .find!(a => a.split("/").back == name)
+            .frontOrNull;
+
+        if (match.isNull)
+        {
+            auto available = schemas.keys.map!(a => a.split("/").back).array;
+
+            stderr.writefln!"ERROR: unknown type '%s' of %s"(name, available);
+            return 1;
+        }
+
+        const key = match.get;
+        const value = schemas[key];
+
         if (cast(ObjectType) value)
         {
-            structs ~= renderStruct(key.split("/").back, value, imports);
+            render.renderObject(key, value, value.description);
+            continue;
+        }
+        if (auto allOf = cast(AllOf) value)
+        {
+            foreach (child; allOf.children)
+            {
+                if (auto objectType = cast(ObjectType) child)
+                {
+                    if (auto dataObj = objectType.findKey("data"))
+                    {
+                        render.renderObject(key, dataObj, value.description);
+                    }
+                }
+            }
         }
     }
-    foreach (import_; imports.sort)
+
+    outputFile.writefln!"/**
+ * WARNING! This file was automatically generated from %s!
+ * Do not edit it manually!
+ */"(arguments.input);
+    outputFile.writefln!"module %s;"(moduleName);
+
+    foreach (import_; render.imports.sort.uniq)
     {
-        writefln!"import %s;"(import_);
+        outputFile.writefln!"import %s;"(import_);
     }
-    foreach (struct_; structs)
+    foreach (struct_; render.structs)
     {
-        writefln!"%s"(struct_);
+        outputFile.writefln!"%s"(struct_);
     }
+    return 0;
+});
+
+string[][string] decodeInvariantArgs(Arguments arguments)
+{
+    string[][string] result = null;
+
+    foreach (invariant_; arguments.bonusInvariants)
+    {
+        with (invariant_.findSplit("=").rename!("key", "_", "value"))
+        {
+            result[key] ~= value;
+        }
+    }
+    return result;
+}
+
+class Render
+{
+    @(This.Default!(() => ["boilerplate"]))
+    string[] imports;
+
+    @(This.Default)
+    string[] structs;
+
+    string[] requestedTypes;
+
+    string[][string] bonusInvariants;
+
+    void renderObject(string key, const Type value, string description)
+    {
+        const name = key.split("/").back;
+
+        if (cast(ObjectType) value)
+        {
+            renderStruct(name, value, description);
+            return;
+        }
+        if (auto allOf = cast(AllOf) value)
+        {
+            if (allOf.children.length == 1)
+            {
+                renderObject(key, allOf.children[0], description);
+                return;
+            }
+        }
+        stderr.writefln!"WARN: not renderable %s; %s"(key, value.classinfo.name);
+    }
+
+    void renderStruct(string name, const Type type, string description)
+    in (cast(ObjectType) type)
+    {
+        auto objectType = cast(ObjectType) type;
+        string result = "\n";
+
+        if (!description.empty)
+        {
+            result ~= description.renderComment(0);
+        }
+        result ~= format!"immutable struct %s\n{\n"(name);
+        foreach (tableEntry; objectType.properties)
+        {
+            const required = objectType.required.canFind(tableEntry.key);
+
+            result ~= renderMember(tableEntry.key, tableEntry.value, !required);
+            result ~= "\n";
+        }
+        if (name in this.bonusInvariants)
+        {
+            foreach (invariant_; this.bonusInvariants.get(name, null))
+            {
+                result ~= format!"    invariant (%s);\n\n"(invariant_);
+            }
+        }
+        result ~= "    @disable this();\n";
+        result ~= "\n";
+        result ~= "    mixin(GenerateAll);\n";
+        result ~= "}";
+        structs ~= result;
+    }
+
+    string renderMember(string name, Type type, bool optional, string modifier = "")
+    {
+        if (auto booleanType = cast(BooleanType) type)
+        {
+            if (optional)
+            {
+                assert(modifier == "");
+                if (!booleanType.default_.isNull)
+                {
+                    return format!"    @(This.Default!%s)\n    bool %s;\n"(booleanType.default_.get, name);
+                }
+                imports ~= "std.typecons";
+                return format!"    @(This.Default)\n    Nullable!bool %s;\n"(name);
+            }
+            return format!"    bool%s %s;\n"(modifier, name);
+        }
+        if (auto stringType = cast(StringType) type)
+        {
+            string udaPrefix = "";
+            if (!stringType.minLength.isNull && stringType.minLength.get == 1)
+            {
+                udaPrefix = "    @NonEmpty\n";
+            }
+            string actualType = "string";
+
+            if (stringType.format_ == "date-time")
+            {
+                actualType = "SysTime";
+                imports ~= "std.datetime";
+            }
+
+            if (optional)
+            {
+                imports ~= "std.typecons";
+                return format!"%s    @(This.Default)\n    %s %s;\n"(udaPrefix, nullableType(actualType, modifier), name);
+            }
+            return format!"%s    %s%s %s;\n"(udaPrefix, actualType, modifier, name);
+        }
+        if (auto objectType = cast(ObjectType) type)
+        {
+            imports ~= "std.json";
+            if (optional)
+            {
+                imports ~= "std.typecons";
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableType("JSONValue", modifier), name);
+            }
+            return format!"    JSONValue%s %s;\n"(modifier, name);
+        }
+        if (auto arrayType = cast(ArrayType) type)
+        {
+            if (arrayType.minItems == 1)
+            {
+                return "    @NonEmpty\n"
+                    ~ renderMember(name, arrayType.items, optional, modifier ~ "[]");
+            }
+            return renderMember(name, arrayType.items, optional, modifier ~ "[]");
+        }
+        if (auto reference = cast(Reference) type)
+        {
+            const typeName = reference.target.split("/").back;
+            const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
+                .chain(dirEntries("include", "*.d", SpanMode.depth))
+                .filter!(file => !file.name.endsWith("Test.d"))
+                .map!(a => a.readText)
+                .filter!(a => a.canFind(format!"struct %s\n"(typeName))
+                    || a.canFind(format!"enum %s\n"(typeName)))
+                .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
+                .array;
+
+            if (matchingImports.empty && !this.requestedTypes.canFind(typeName))
+            {
+                stderr.writefln!"WARN: no import found for type %s"(reference.target);
+            }
+
+            if (matchingImports.length > 1)
+            {
+                stderr.writefln!"WARN: multiple module sources for %s: %s, using %s"(
+                    reference.target, matchingImports, matchingImports.front);
+            }
+
+            if (!matchingImports.empty)
+                imports ~= matchingImports.front;
+
+            if (optional)
+            {
+                imports ~= "std.typecons";
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier), name);
+            }
+            return format!"    %s%s %s;\n"(typeName, modifier, name);
+        }
+        assert(false, format!"TODO %s"(type));
+    }
+
+    mixin(GenerateThis);
 }
 
 abstract class Type
@@ -55,7 +294,9 @@ in (value.type == JSONType.array)
     string type = value.hasKey("type") ? value.getEntry("type").str : null;
     if (value.hasKey("allOf"))
     {
-        return new AllOf(value.getEntry("allOf").decodeJson!(Type[], .decode));
+        const description = value.hasKey("description") ? value.getEntry("description").str : null;
+
+        return new AllOf(value.getEntry("allOf").decodeJson!(Type[], .decode), description);
     }
     if (value.hasKey("$ref"))
     {
@@ -99,6 +340,15 @@ class ObjectType : Type
     @(This.Default!null)
     string[] required;
 
+    Type findKey(string key)
+    {
+        return properties
+            .filter!(a => a.key == key)
+            .frontOrNull
+            .apply!"a.value"
+            .get(null);
+    }
+
     override Type transform(Type delegate(Type) dg)
     {
         with (ObjectType.Builder())
@@ -137,6 +387,9 @@ class StringType : Type
 
     @(This.Default)
     Nullable!string format_;
+
+    @(This.Default)
+    Nullable!int minLength;
 
     override Type transform(Type delegate(Type) dg)
     {
@@ -202,6 +455,7 @@ class SchemaLoader
             const root = Loader.fromFile(path).load;
             const JSONValue jsonValue = root.toJson;
             Type[string] result = null;
+
             foreach (JSONValue pair; jsonValue.getEntry("components").getEntry("schemas").array)
             {
                 const key = pair["key"].str;
@@ -216,27 +470,6 @@ class SchemaLoader
     mixin(GenerateToString);
 }
 
-string renderStruct(string name, Type type, ref string[] imports)
-in (cast(ObjectType) type)
-{
-    auto objectType = cast(ObjectType) type;
-    string result = "\n";
-    if (!type.description.empty)
-    {
-        result ~= type.description.renderComment(0);
-    }
-    result ~= format!"immutable struct %s\n{\n"(name);
-    foreach (tableEntry; objectType.properties)
-    {
-        bool required = objectType.required.canFind(name);
-        result ~= renderMember(tableEntry.key, tableEntry.value, !required, imports);
-        result ~= "\n";
-    }
-    result ~= "    mixin(GenerateAll);\n";
-    result ~= "}";
-    return result;
-}
-
 string renderComment(string comment, int indent)
 {
     const spacer = ' '.repeat(indent).array;
@@ -245,63 +478,19 @@ string renderComment(string comment, int indent)
         .split("\n")
         .strip!(a => a.empty)
         .valueObjectify;
+
     if (lines.length == 1)
     {
         return format!"%s/// %s\n"(spacer, lines.front);
     }
     return format!"%s/**\n"(spacer)
-        ~ lines.map!(line => format!"%s * %s\n"(spacer, line)).join
+        ~ lines.map!(line => format!"%s * %s"(spacer, line).strip ~ "\n").join
         ~ format!"%s */\n"(spacer);
 }
 
 alias valueObjectify = (string[] range) => range.front.valueObjectify.only.chain(range.dropOne).array;
 alias valueObjectify = (string line) => format!"This immutable value type represents %s"(
     line.front.toLower.only.chain(line.dropOne));
-
-string renderMember(string name, Type type, bool optional, ref string[] imports, string modifier = "")
-{
-    if (auto booleanType = cast(BooleanType) type)
-    {
-        if (optional)
-        {
-            assert(modifier == "");
-            if (!booleanType.default_.isNull)
-            {
-                return format!"    @(This.Default!%s)\n    bool %s;\n"(booleanType.default_.get, name);
-            }
-            return format!"    @(This.Default)\n    bool %s;\n"(name);
-        }
-        return format!"    bool%s %s;\n"(modifier, name);
-    }
-    if (auto stringType = cast(StringType) type)
-    {
-        return format!"    string%s %s;\n"(modifier, name);
-    }
-    if (auto objectType = cast(ObjectType) type)
-    {
-        return format!"    JSONValue%s %s;\n"(modifier, name);
-    }
-    if (auto arrayType = cast(ArrayType) type)
-    {
-        return renderMember(name, arrayType.items, optional, imports, modifier ~ "[]");
-    }
-    if (auto reference = cast(Reference) type)
-    {
-        const typeName = reference.target.split("/").back;
-        const import_ = dirEntries("include", "*.d", SpanMode.depth)
-            .filter!(file => !file.name.endsWith("Test.d"))
-            .map!(a => a.readText)
-            .filter!(a => a.canFind(format!"struct %s\n"(typeName)))
-            .frontOrNull
-            .apply!(a => a.find("module ").drop("module ".length).until(";").toUTF8);
-
-        if (!import_.isNull && !imports.canFind(import_.get))
-            imports ~= import_.get;
-
-        return format!"    %s%s %s;\n"(typeName, modifier, name);
-    }
-    assert(false, format!"TODO %s"(type));
-}
 
 bool hasKey(JSONValue table, string key)
 in (table.isTable)
@@ -370,5 +559,16 @@ JSONValue toJson(const Node node)
             assert(false);
     }
 }
+
+string nullableType(string type, string modifier)
+{
+    if (modifier.empty)
+    {
+        return format!"Nullable!%s"(type);
+    }
+    return format!"Nullable!(%s%s)"(type, modifier);
+}
+
+private alias removeLeading = (range, element) => choose(range.front == element, range.dropOne, range);
 
 private alias frontOrNull = range => range.empty ? Nullable!(ElementType!(typeof(range)))() : range.front.nullable;

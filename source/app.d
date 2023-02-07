@@ -173,7 +173,12 @@ class Render
                 result ~= format!"    invariant (%s);\n\n"(invariant_);
             }
         }
-        result ~= "    @disable this();\n";
+        if (!objectType.required.empty)
+        {
+            // disabling this() on a struct with all-optional fields
+            // results in an unconstructable type
+            result ~= "    @disable this();\n";
+        }
         result ~= "\n";
         result ~= "    mixin(GenerateAll);\n";
         result ~= "}";

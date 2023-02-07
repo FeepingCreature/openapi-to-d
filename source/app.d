@@ -515,7 +515,7 @@ string renderComment(string comment, int indent)
         return format!"%s/// %s\n"(spacer, lines.front);
     }
     return format!"%s/**\n"(spacer)
-        ~ lines.map!(line => format!"%s * %s"(spacer, line).strip ~ "\n").join
+        ~ lines.map!(line => format!"%s * %s"(spacer, line).stripRight ~ "\n").join
         ~ format!"%s */\n"(spacer);
 }
 

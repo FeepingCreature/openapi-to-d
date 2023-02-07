@@ -141,6 +141,19 @@ class Render
         {
             if (allOf.children.length == 1)
             {
+                // struct, one member, aliased to this.
+                if (auto reference = cast(Reference) allOf.children[0])
+                {
+                    auto substitute = new ObjectType;
+                    const fieldName = reference.target.referenceToType.asFieldName;
+
+                    substitute.properties ~= TableEntry!Type(fieldName, reference);
+                    substitute.required ~= fieldName;
+                    renderStruct(name, substitute, description, format!"alias %s this;"(fieldName));
+                    return;
+                }
+                // allOf with one direct inline type: just flatten it into a struct.
+                // When is this useful...?
                 renderObject(key, allOf.children[0], description);
                 return;
             }
@@ -148,7 +161,7 @@ class Render
         stderr.writefln!"WARN: not renderable %s; %s"(key, value.classinfo.name);
     }
 
-    void renderStruct(string name, const Type type, string description)
+    void renderStruct(string name, const Type type, string description, string extra = null)
     in (cast(ObjectType) type)
     {
         auto objectType = cast(ObjectType) type;
@@ -173,13 +186,16 @@ class Render
                 result ~= format!"    invariant (%s);\n\n"(invariant_);
             }
         }
+        if (!extra.empty)
+        {
+            result ~= format!"    %s\n\n"(extra);
+        }
         if (!objectType.required.empty)
         {
             // disabling this() on a struct with all-optional fields
             // results in an unconstructable type
-            result ~= "    @disable this();\n";
+            result ~= "    @disable this();\n\n";
         }
-        result ~= "\n";
         result ~= "    mixin(GenerateAll);\n";
         result ~= "}";
         structs ~= result;
@@ -244,7 +260,7 @@ class Render
         }
         if (auto reference = cast(Reference) type)
         {
-            const typeName = reference.target.split("/").back;
+            const typeName = reference.target.referenceToType;
             const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
                 .chain(dirEntries("include", "*.d", SpanMode.depth))
                 .filter!(file => !file.name.endsWith("Test.d"))
@@ -279,6 +295,16 @@ class Render
     }
 
     mixin(GenerateThis);
+}
+
+alias referenceToType = target => target.split("/").back;
+
+alias asFieldName = type => chain(type.front.toLower.only, type.dropOne).toUTF8;
+
+unittest
+{
+    assert("Foo".asFieldName == "foo");
+    assert("FooBar".asFieldName == "fooBar");
 }
 
 abstract class Type

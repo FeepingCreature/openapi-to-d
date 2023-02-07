@@ -90,6 +90,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
  * Do not edit it manually!
  */"(arguments.input);
     outputFile.writefln!"module %s;"(moduleName);
+    outputFile.writefln!"";
 
     foreach (import_; render.imports.sort.uniq)
     {

@@ -251,12 +251,20 @@ class Render
         }
         if (auto arrayType = cast(ArrayType) type)
         {
-            if (arrayType.minItems == 1)
+            const member = renderMember(name, arrayType.items, optional, modifier ~ "[]");
+
+            if (!arrayType.minItems.isNull)
             {
-                return "    @NonEmpty\n"
-                    ~ renderMember(name, arrayType.items, optional, modifier ~ "[]");
+                if (arrayType.minItems.get == 1)
+                {
+                    return "    @NonEmpty\n" ~ member;
+                }
+                if (arrayType.minItems.get > 1)
+                {
+                    return member ~ format!"\n    invariant (this.%s.length >= %s);\n"(name, arrayType.minItems.get);
+                }
             }
-            return renderMember(name, arrayType.items, optional, modifier ~ "[]");
+            return member;
         }
         if (auto reference = cast(Reference) type)
         {

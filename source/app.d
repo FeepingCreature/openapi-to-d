@@ -45,7 +45,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 
     auto schemas = loader.load(arguments.input).schemas;
     const string[] types = arguments.type.empty ? [moduleName.split(".").back] : arguments.type;
-    auto render = new Render(types, arguments.decodeInvariantArgs);
+    auto render = new Render(types, arguments.decodeInvariantArgs, arguments.input);
 
     foreach (name; types)
     {
@@ -85,10 +85,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         }
     }
 
-    outputFile.writefln!"/**
- * WARNING! This file was automatically generated from %s!
- * Do not edit it manually!
- */"(arguments.input);
+    outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
     outputFile.writefln!"module %s;"(moduleName);
     outputFile.writefln!"";
 
@@ -128,6 +125,8 @@ class Render
     string[] requestedTypes;
 
     string[][string] bonusInvariants;
+
+    string source;
 
     void renderObject(string key, const Type value, string description)
     {
@@ -170,7 +169,7 @@ class Render
 
         if (!description.empty)
         {
-            result ~= description.renderComment(0);
+            result ~= description.renderComment(0, this.source);
         }
         result ~= format!"immutable struct %s\n{\n"(name);
         foreach (tableEntry; objectType.properties)
@@ -502,19 +501,14 @@ class SchemaLoader
     mixin(GenerateToString);
 }
 
-string renderComment(string comment, int indent)
+string renderComment(string comment, int indent, string source)
 {
     const spacer = ' '.repeat(indent).array;
-    const lines = comment
+    const lines = [format!"This value object has been generated from %s:"(source)] ~ comment
         .strip
         .split("\n")
-        .strip!(a => a.empty)
-        .valueObjectify;
+        .strip!(a => a.empty);
 
-    if (lines.length == 1)
-    {
-        return format!"%s/// %s\n"(spacer, lines.front);
-    }
     return format!"%s/**\n"(spacer)
         ~ lines.map!(line => format!"%s * %s"(spacer, line).stripRight ~ "\n").join
         ~ format!"%s */\n"(spacer);

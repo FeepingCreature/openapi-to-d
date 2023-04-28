@@ -219,13 +219,16 @@ class Render
             result ~= description.renderComment(0, this.source);
         }
         result ~= format!"immutable struct %s\n{\n"(name);
+        string extraTypes, members;
         foreach (tableEntry; objectType.properties)
         {
             const required = objectType.required.canFind(tableEntry.key);
 
-            result ~= renderMember(tableEntry.key, tableEntry.value, !required);
-            result ~= "\n";
+            members ~= renderMember(tableEntry.key, tableEntry.value, !required, extraTypes);
+            members ~= "\n";
         }
+        result ~= extraTypes;
+        result ~= members;
         foreach (invariant_; invariants)
         {
             result ~= format!"    invariant (%s);\n\n"(invariant_);
@@ -262,7 +265,7 @@ class Render
         types ~= result;
     }
 
-    string renderMember(string name, Type type, bool optional, string modifier = "")
+    string renderMember(string name, Type type, bool optional, ref string extraTypes, string modifier = "")
     {
         if (auto booleanType = cast(BooleanType) type)
         {
@@ -292,6 +295,16 @@ class Render
                 actualType = "SysTime";
                 imports ~= "std.datetime";
             }
+            else if (!stringType.enum_.empty)
+            {
+                actualType = name.capitalize;
+                extraTypes ~= format!"    enum %s\n    {\n"(actualType);
+                foreach (member; stringType.enum_)
+                {
+                    extraTypes ~= "        " ~ member.screamingSnakeToCamelCase ~ ",\n";
+                }
+                extraTypes ~= "    }\n\n";
+            }
 
             if (optional)
             {
@@ -312,7 +325,7 @@ class Render
         }
         if (auto arrayType = cast(ArrayType) type)
         {
-            const member = renderMember(name, arrayType.items, optional, modifier ~ "[]");
+            const member = renderMember(name, arrayType.items, optional, extraTypes, modifier ~ "[]");
 
             if (!arrayType.minItems.isNull)
             {
@@ -686,9 +699,7 @@ private alias screamingSnakeToCamelCase = a => a
     .capitalizeAllButFirst
     .join;
 
-private alias capitalizeAllButFirst = range => chain(
-    range.front.only,
-    range.drop(1).map!(word => chain(word.front.toUpper.only, word.drop(1)).toUTF8));
+private alias capitalizeAllButFirst = range => chain(range.front.only, range.drop(1).map!capitalize);
 
 unittest
 {

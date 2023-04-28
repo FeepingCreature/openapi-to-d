@@ -10,6 +10,6 @@
 		"serialized": ">=1.6.3"
 	},
 	"description": "Convert OpenAPI documentation to Boilerplated D/DTO headers",
-	"license": "proprietary",
+	"license": "BSL-1.0",
 	"name": "openapi-to-d"
 }

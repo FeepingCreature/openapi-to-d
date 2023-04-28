@@ -12,6 +12,7 @@ import std.range;
 import std.stdio;
 import std.string;
 import std.typecons;
+import std.uni;
 import std.utf;
 import text.json.Decode;
 
@@ -28,70 +29,72 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     auto config = loadConfig(arguments.config);
     auto schemas = loader.load(config.source).schemas;
 
-    foreach (type; config.types)
+    foreach (key, type; schemas)
     {
-        auto outputPath = buildPath(config.targetFolder, type.name ~ ".d");
-        auto outputFile = File(outputPath, "w");
+        const name = key.split("/").back;
+        auto schemaConfig = config.schemas.get(name, SchemaConfig());
+
+        if (!schemaConfig.include)
+            continue;
+
+        auto outputPath = buildPath(config.targetFolder, name ~ ".d");
         auto moduleName = outputPath
             .stripExtension
             .split("/")
             .removeLeading("src")
             .removeLeading("export")
             .join(".");
-        auto types = [type] ~ type.include;
 
-        auto render = new Render(type, config.source);
+        auto render = new Render(schemaConfig, config.source);
 
-        typesInFile: foreach (typeInFile; types)
+        bool rendered = false;
+
+        if (cast(ObjectType) type)
         {
-            auto name = typeInFile.name;
-            auto match = schemas
-                .keys
-                .find!(a => a.split("/").back == name)
-                .frontOrNull;
-
-            if (match.isNull)
+            render.renderObject(key, type, schemaConfig.invariant_, type.description);
+            rendered = true;
+        }
+        else if (auto stringType = cast(StringType) type)
+        {
+            if (!stringType.enum_.empty)
             {
-                auto available = schemas.keys.map!(a => a.split("/").back).array;
-
-                stderr.writefln!"ERROR: unknown type '%s' of %s"(name, available);
-                return 1;
+                render.renderEnum(name, stringType.enum_, type.description);
+                rendered = true;
             }
-
-            const key = match.get;
-            const value = schemas[key];
-
-            if (cast(ObjectType) value)
+        }
+        else if (auto allOf = cast(AllOf) type)
+        {
+            foreach (child; allOf.children)
             {
-                render.renderObject(key, value, typeInFile.invariants, value.description);
-                continue typesInFile;
-            }
-            if (auto allOf = cast(AllOf) value)
-            {
-                foreach (child; allOf.children)
+                if (auto objectType = cast(ObjectType) child)
                 {
-                    if (auto objectType = cast(ObjectType) child)
+                    // Looks like an event. Just render 'data'.
+                    if (auto dataObj = objectType.findKey("data"))
                     {
-                        // Looks like an event. Just render 'data'.
-                        if (auto dataObj = objectType.findKey("data"))
-                        {
-                            render.renderObject(key, dataObj, typeInFile.invariants, value.description);
-                            continue typesInFile;
-                        }
+                        render.renderObject(key, dataObj, schemaConfig.invariant_, type.description);
+                        rendered = true;
+                        break;
                     }
                 }
+            }
+            if (!rendered)
+            {
                 // Object plus a reference just gets it as a field aliased to this.
                 if (allOf.children.count!(a => cast(Reference) a) == 1
                     && allOf.children.count!(a => cast(ObjectType) a) == 1)
                 {
-                    render.renderObject(key, value, typeInFile.invariants, value.description);
-                    continue typesInFile;
+                    render.renderObject(key, type, schemaConfig.invariant_, type.description);
+                    rendered = true;
                 }
             }
-            stderr.writefln!"Cannot render value for type %s: %s"(name, value.classinfo.name);
+        }
+        if (!rendered)
+        {
+            stderr.writefln!"Cannot render value for type %s: %s"(name, type.classinfo.name);
             return 1;
         }
 
+        auto outputFile = File(outputPath, "w");
         outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
         outputFile.writefln!"module %s;"(moduleName);
         outputFile.writefln!"";
@@ -100,10 +103,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         {
             outputFile.writefln!"import %s;"(import_);
         }
-        foreach (struct_; render.structs)
+        foreach (generatedType; render.types)
         {
-            outputFile.writefln!"%s"(struct_);
+            outputFile.writefln!"%s"(generatedType);
         }
+        outputFile.close;
     }
     return 0;
 });
@@ -114,22 +118,18 @@ struct Config
 
     string targetFolder;
 
-    TypeConfig[] types;
-
-    invariant (types.all!(config => config.include.all!(a => a.include.empty)));
+    SchemaConfig[string] schemas;
 
     mixin(GenerateAll);
 }
 
-struct TypeConfig
+struct SchemaConfig
 {
-    string name;
+    @(This.Default!true)
+    bool include = true;
 
     @(This.Default)
-    string[] invariants;
-
-    @(This.Default)
-    TypeConfig[] include;
+    const(string)[] invariant_;
 
     mixin(GenerateAll);
 }
@@ -142,43 +142,16 @@ Config loadConfig(string path)
     return decodeJson!(Config, decodeConfig)(jsonValue);
 }
 
-TypeConfig decodeConfig(T : TypeConfig)(const JSONValue value)
+const(string)[] decodeConfig(T : const(string)[])(const JSONValue value)
 {
     if (value.type == JSONType.string)
     {
-        return TypeConfig(value.str);
+        return [value.str];
     }
-    static struct TypeConfigDto
-    {
-        string name;
-
-        @(This.Default)
-        Nullable!JSONValue invariant_;
-
-        @(This.Default)
-        TypeConfig[] include;
-
-        mixin(GenerateAll);
-    }
-    auto dto = decodeJson!(TypeConfigDto, decodeConfig)(value);
-
-    string[] invariants()
-    {
-        if (dto.invariant_.isNull)
-        {
-            return null;
-        }
-        if (dto.invariant_.get.type == JSONType.string)
-        {
-            return [dto.invariant_.get.str];
-        }
-        return dto.invariant_.get.decodeJson!(string[]);
-    }
-
-    return TypeConfig(dto.name, invariants, dto.include);
+    return value.decodeJson!(string[]);
 }
 
-private alias _ = decodeConfig!TypeConfig;
+private alias _ = decodeConfig!(string[]);
 
 class Render
 {
@@ -186,13 +159,13 @@ class Render
     string[] imports;
 
     @(This.Default)
-    string[] structs;
+    string[] types;
 
-    TypeConfig typeConfig;
+    SchemaConfig schemaConfig;
 
     string source;
 
-    void renderObject(string key, const Type value, string[] invariants, string description)
+    void renderObject(string key, const Type value, const string[] invariants, string description)
     {
         const name = key.split("/").back;
 
@@ -235,7 +208,7 @@ class Render
         stderr.writefln!"WARN: not renderable %s; %s"(key, value.classinfo.name);
     }
 
-    void renderStruct(string name, const Type type, string[] invariants, string description, string extra = null)
+    void renderStruct(string name, const Type type, const string[] invariants, string description, string extra = null)
     in (cast(ObjectType) type)
     {
         auto objectType = cast(ObjectType) type;
@@ -269,7 +242,24 @@ class Render
         }
         result ~= "    mixin(GenerateAll);\n";
         result ~= "}";
-        structs ~= result;
+        types ~= result;
+    }
+
+    void renderEnum(string name, string[] members, string description)
+    {
+        string result = "\n";
+
+        if (!description.empty)
+        {
+            result ~= description.renderComment(0, this.source);
+        }
+        result ~= format!"enum %s\n{\n"(name);
+        foreach (member; members)
+        {
+            result ~= "    " ~ member.screamingSnakeToCamelCase ~ ",\n";
+        }
+        result ~= "}";
+        types ~= result;
     }
 
     string renderMember(string name, Type type, bool optional, string modifier = "")
@@ -349,7 +339,7 @@ class Render
                 .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
                 .array;
 
-            if (matchingImports.empty && typeIncluded(typeName))
+            if (matchingImports.empty)
             {
                 stderr.writefln!"WARN: no import found for type %s"(reference.target);
             }
@@ -371,15 +361,6 @@ class Render
             return format!"    %s%s %s;\n"(typeName, modifier, name);
         }
         assert(false, format!"TODO %s"(type));
-    }
-
-    bool typeIncluded(string typeName)
-    {
-        bool recurse(TypeConfig config)
-        {
-            return config.name == typeName || config.include.any!recurse;
-        }
-        return recurse(this.typeConfig);
     }
 
     mixin(GenerateThis);
@@ -698,3 +679,19 @@ string nullableType(string type, string modifier)
 private alias removeLeading = (range, element) => choose(range.front == element, range.dropOne, range);
 
 private alias frontOrNull = range => range.empty ? Nullable!(ElementType!(typeof(range)))() : range.front.nullable;
+
+private alias screamingSnakeToCamelCase = a => a
+    .split("_")
+    .map!toLower
+    .capitalizeAllButFirst
+    .join;
+
+private alias capitalizeAllButFirst = range => chain(
+    range.front.only,
+    range.drop(1).map!(word => chain(word.front.toUpper.only, word.drop(1)).toUTF8));
+
+unittest
+{
+    assert("FOO".screamingSnakeToCamelCase == "foo");
+    assert("FOO_BAR".screamingSnakeToCamelCase == "fooBar");
+}

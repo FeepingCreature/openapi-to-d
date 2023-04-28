@@ -47,7 +47,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     const string[] types = arguments.type.empty ? [moduleName.split(".").back] : arguments.type;
     auto render = new Render(types, arguments.decodeInvariantArgs, arguments.input);
 
-    foreach (name; types)
+    outer: foreach (name; types)
     {
         auto match = schemas
             .keys
@@ -76,13 +76,24 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             {
                 if (auto objectType = cast(ObjectType) child)
                 {
+                    // Looks like an event. Just render 'data'.
                     if (auto dataObj = objectType.findKey("data"))
                     {
                         render.renderObject(key, dataObj, value.description);
+                        continue outer;
                     }
                 }
             }
+            // Object plus a reference just gets it as a field aliased to this.
+            if (allOf.children.count!(a => cast(Reference) a) == 1
+                && allOf.children.count!(a => cast(ObjectType) a) == 1)
+            {
+                render.renderObject(key, value, value.description);
+                continue outer;
+            }
         }
+        stderr.writefln!"Cannot render value for type %s: %s"(name, value.classinfo.name);
+        return 1;
     }
 
     outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
@@ -139,22 +150,32 @@ class Render
         }
         if (auto allOf = cast(AllOf) value)
         {
-            if (allOf.children.length == 1)
+            if (allOf.children.count!(a => cast(Reference) a) <= 1
+                && allOf.children.count!(a => cast(ObjectType) a) <= 1)
             {
-                // struct, one member, aliased to this.
-                if (auto reference = cast(Reference) allOf.children[0])
+                auto refChildren = allOf.children.map!(a => cast(Reference) a).find!"a";
+                auto objChildren = allOf.children.map!(a => cast(ObjectType) a).find!"a";
+                auto substitute = new ObjectType;
+                string extra = null;
+
+                if (!objChildren.empty)
                 {
-                    auto substitute = new ObjectType;
+                    auto obj = objChildren.front;
+
+                    substitute.properties ~= obj.properties;
+                    substitute.required ~= obj.required;
+                }
+                if (!refChildren.empty)
+                {
+                    auto reference = refChildren.front;
+                    // struct, one member, aliased to this.
                     const fieldName = reference.target.referenceToType.asFieldName;
 
                     substitute.properties ~= TableEntry!Type(fieldName, reference);
                     substitute.required ~= fieldName;
-                    renderStruct(name, substitute, description, format!"alias %s this;"(fieldName));
-                    return;
+                    extra = format!"alias %s this;"(fieldName);
                 }
-                // allOf with one direct inline type: just flatten it into a struct.
-                // When is this useful...?
-                renderObject(key, allOf.children[0], description);
+                renderStruct(name, substitute, description, extra);
                 return;
             }
         }

@@ -2,12 +2,12 @@
 	"fileVersion": 1,
 	"versions": {
 		"argparse": "1.2.0",
-		"boilerplate": "1.9.0",
+		"boilerplate": "1.9.1",
 		"dshould": "1.7.1",
 		"dxml": "0.4.3",
 		"dyaml": "0.9.2",
 		"prettyprint": "1.0.8",
-		"serialized": "1.9.0",
+		"serialized": "1.11.0",
 		"tinyendian": "0.2.0",
 		"unit-threaded": "2.1.2"
 	}

@@ -18,112 +18,167 @@ import text.json.Decode;
 @(Command.Description("Convert OpenAPI specification to serialized-ready D structs"))
 struct Arguments
 {
-    @(PositionalArgument(0).Description("OpenAPI input file"))
-    string input;
-
-    @(NamedArgument.Required.Description("Output file that will be written"))
-    string output;
-
-    // often invariants are not easily expressed in OpenAPI.
-    @(NamedArgument("bonus-invariant").Description("Inject an additional invariant into the type"))
-    string[] bonusInvariants;
-
-    @(NamedArgument.Description("Types that will be generated"))
-    string[] type;
+    @(PositionalArgument(0).Description("openapi-to-d configuration file"))
+    string config;
 }
 
 mixin CLI!Arguments.main!((const Arguments arguments)
 {
     auto loader = new SchemaLoader;
-    auto outputFile = File(arguments.output, "w");
-    auto moduleName = arguments.output
-        .stripExtension
-        .split("/")
-        .removeLeading("src")
-        .removeLeading("export")
-        .join(".");
+    auto config = loadConfig(arguments.config);
+    auto schemas = loader.load(config.source).schemas;
 
-    auto schemas = loader.load(arguments.input).schemas;
-    const string[] types = arguments.type.empty ? [moduleName.split(".").back] : arguments.type;
-    auto render = new Render(types, arguments.decodeInvariantArgs, arguments.input);
-
-    outer: foreach (name; types)
+    foreach (type; config.types)
     {
-        auto match = schemas
-            .keys
-            .find!(a => a.split("/").back == name)
-            .frontOrNull;
+        auto outputPath = buildPath(config.targetFolder, type.name ~ ".d");
+        auto outputFile = File(outputPath, "w");
+        auto moduleName = outputPath
+            .stripExtension
+            .split("/")
+            .removeLeading("src")
+            .removeLeading("export")
+            .join(".");
+        auto types = [type] ~ type.include;
 
-        if (match.isNull)
+        auto render = new Render(type, config.source);
+
+        typesInFile: foreach (typeInFile; types)
         {
-            auto available = schemas.keys.map!(a => a.split("/").back).array;
+            auto name = typeInFile.name;
+            auto match = schemas
+                .keys
+                .find!(a => a.split("/").back == name)
+                .frontOrNull;
 
-            stderr.writefln!"ERROR: unknown type '%s' of %s"(name, available);
+            if (match.isNull)
+            {
+                auto available = schemas.keys.map!(a => a.split("/").back).array;
+
+                stderr.writefln!"ERROR: unknown type '%s' of %s"(name, available);
+                return 1;
+            }
+
+            const key = match.get;
+            const value = schemas[key];
+
+            if (cast(ObjectType) value)
+            {
+                render.renderObject(key, value, typeInFile.invariants, value.description);
+                continue typesInFile;
+            }
+            if (auto allOf = cast(AllOf) value)
+            {
+                foreach (child; allOf.children)
+                {
+                    if (auto objectType = cast(ObjectType) child)
+                    {
+                        // Looks like an event. Just render 'data'.
+                        if (auto dataObj = objectType.findKey("data"))
+                        {
+                            render.renderObject(key, dataObj, typeInFile.invariants, value.description);
+                            continue typesInFile;
+                        }
+                    }
+                }
+                // Object plus a reference just gets it as a field aliased to this.
+                if (allOf.children.count!(a => cast(Reference) a) == 1
+                    && allOf.children.count!(a => cast(ObjectType) a) == 1)
+                {
+                    render.renderObject(key, value, typeInFile.invariants, value.description);
+                    continue typesInFile;
+                }
+            }
+            stderr.writefln!"Cannot render value for type %s: %s"(name, value.classinfo.name);
             return 1;
         }
 
-        const key = match.get;
-        const value = schemas[key];
+        outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
+        outputFile.writefln!"module %s;"(moduleName);
+        outputFile.writefln!"";
 
-        if (cast(ObjectType) value)
+        foreach (import_; render.imports.sort.uniq)
         {
-            render.renderObject(key, value, value.description);
-            continue;
+            outputFile.writefln!"import %s;"(import_);
         }
-        if (auto allOf = cast(AllOf) value)
+        foreach (struct_; render.structs)
         {
-            foreach (child; allOf.children)
-            {
-                if (auto objectType = cast(ObjectType) child)
-                {
-                    // Looks like an event. Just render 'data'.
-                    if (auto dataObj = objectType.findKey("data"))
-                    {
-                        render.renderObject(key, dataObj, value.description);
-                        continue outer;
-                    }
-                }
-            }
-            // Object plus a reference just gets it as a field aliased to this.
-            if (allOf.children.count!(a => cast(Reference) a) == 1
-                && allOf.children.count!(a => cast(ObjectType) a) == 1)
-            {
-                render.renderObject(key, value, value.description);
-                continue outer;
-            }
+            outputFile.writefln!"%s"(struct_);
         }
-        stderr.writefln!"Cannot render value for type %s: %s"(name, value.classinfo.name);
-        return 1;
-    }
-
-    outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
-    outputFile.writefln!"module %s;"(moduleName);
-    outputFile.writefln!"";
-
-    foreach (import_; render.imports.sort.uniq)
-    {
-        outputFile.writefln!"import %s;"(import_);
-    }
-    foreach (struct_; render.structs)
-    {
-        outputFile.writefln!"%s"(struct_);
     }
     return 0;
 });
 
-string[][string] decodeInvariantArgs(Arguments arguments)
+struct Config
 {
-    string[][string] result = null;
+    string source;
 
-    foreach (invariant_; arguments.bonusInvariants)
-    {
-        with (invariant_.findSplit("=").rename!("key", "_", "value"))
-        {
-            result[key] ~= value;
-        }
-    }
-    return result;
+    string targetFolder;
+
+    TypeConfig[] types;
+
+    invariant (types.all!(config => config.include.all!(a => a.include.empty)));
+
+    mixin(GenerateAll);
 }
+
+struct TypeConfig
+{
+    string name;
+
+    @(This.Default)
+    string[] invariants;
+
+    @(This.Default)
+    TypeConfig[] include;
+
+    mixin(GenerateAll);
+}
+
+Config loadConfig(string path)
+{
+    const root = Loader.fromFile(path).load;
+    const JSONValue jsonValue = root.toJson(No.ordered);
+
+    return decodeJson!(Config, decodeConfig)(jsonValue);
+}
+
+TypeConfig decodeConfig(T : TypeConfig)(const JSONValue value)
+{
+    if (value.type == JSONType.string)
+    {
+        return TypeConfig(value.str);
+    }
+    static struct TypeConfigDto
+    {
+        string name;
+
+        @(This.Default)
+        Nullable!JSONValue invariant_;
+
+        @(This.Default)
+        TypeConfig[] include;
+
+        mixin(GenerateAll);
+    }
+    auto dto = decodeJson!(TypeConfigDto, decodeConfig)(value);
+
+    string[] invariants()
+    {
+        if (dto.invariant_.isNull)
+        {
+            return null;
+        }
+        if (dto.invariant_.get.type == JSONType.string)
+        {
+            return [dto.invariant_.get.str];
+        }
+        return dto.invariant_.get.decodeJson!(string[]);
+    }
+
+    return TypeConfig(dto.name, invariants, dto.include);
+}
+
+private alias _ = decodeConfig!TypeConfig;
 
 class Render
 {
@@ -133,19 +188,17 @@ class Render
     @(This.Default)
     string[] structs;
 
-    string[] requestedTypes;
-
-    string[][string] bonusInvariants;
+    TypeConfig typeConfig;
 
     string source;
 
-    void renderObject(string key, const Type value, string description)
+    void renderObject(string key, const Type value, string[] invariants, string description)
     {
         const name = key.split("/").back;
 
         if (cast(ObjectType) value)
         {
-            renderStruct(name, value, description);
+            renderStruct(name, value, invariants, description);
             return;
         }
         if (auto allOf = cast(AllOf) value)
@@ -175,14 +228,14 @@ class Render
                     substitute.required ~= fieldName;
                     extra = format!"alias %s this;"(fieldName);
                 }
-                renderStruct(name, substitute, description, extra);
+                renderStruct(name, substitute, invariants, description, extra);
                 return;
             }
         }
         stderr.writefln!"WARN: not renderable %s; %s"(key, value.classinfo.name);
     }
 
-    void renderStruct(string name, const Type type, string description, string extra = null)
+    void renderStruct(string name, const Type type, string[] invariants, string description, string extra = null)
     in (cast(ObjectType) type)
     {
         auto objectType = cast(ObjectType) type;
@@ -200,12 +253,9 @@ class Render
             result ~= renderMember(tableEntry.key, tableEntry.value, !required);
             result ~= "\n";
         }
-        if (name in this.bonusInvariants)
+        foreach (invariant_; invariants)
         {
-            foreach (invariant_; this.bonusInvariants.get(name, null))
-            {
-                result ~= format!"    invariant (%s);\n\n"(invariant_);
-            }
+            result ~= format!"    invariant (%s);\n\n"(invariant_);
         }
         if (!extra.empty)
         {
@@ -299,7 +349,7 @@ class Render
                 .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
                 .array;
 
-            if (matchingImports.empty && !this.requestedTypes.canFind(typeName))
+            if (matchingImports.empty && typeIncluded(typeName))
             {
                 stderr.writefln!"WARN: no import found for type %s"(reference.target);
             }
@@ -321,6 +371,15 @@ class Render
             return format!"    %s%s %s;\n"(typeName, modifier, name);
         }
         assert(false, format!"TODO %s"(type));
+    }
+
+    bool typeIncluded(string typeName)
+    {
+        bool recurse(TypeConfig config)
+        {
+            return config.name == typeName || config.include.any!recurse;
+        }
+        return recurse(this.typeConfig);
     }
 
     mixin(GenerateThis);
@@ -513,7 +572,7 @@ class SchemaLoader
         if (path !in this.files)
         {
             const root = Loader.fromFile(path).load;
-            const JSONValue jsonValue = root.toJson;
+            const JSONValue jsonValue = root.toJson(Yes.ordered);
             Type[string] result = null;
 
             foreach (JSONValue pair; jsonValue.getEntry("components").getEntry("schemas").array)
@@ -584,7 +643,7 @@ bool isTable(JSONValue value)
             && "key" in a && "value" in a && a["key"].type == JSONType.string);
 }
 
-JSONValue toJson(const Node node)
+JSONValue toJson(const Node node, Flag!"ordered" ordered)
 {
     final switch (node.type) with (NodeType) {
         case null_: return JSONValue(null_);
@@ -596,18 +655,30 @@ JSONValue toJson(const Node node)
         case timestamp: return JSONValue(node.get!(.string));
         case string: return JSONValue(node.get!(.string));
         case mapping:
-            // Make an array, because order.
-            JSONValue[] result;
-            foreach (.string key, const Node value; node)
+            if (ordered)
             {
-                result ~= JSONValue(["key": JSONValue(key), "value": value.toJson]);
+                // Make an array, to preserve order.
+                JSONValue[] result;
+                foreach (.string key, const Node value; node)
+                {
+                    result ~= JSONValue(["key": JSONValue(key), "value": value.toJson(ordered)]);
+                }
+                return JSONValue(result);
             }
-            return JSONValue(result);
+            else
+            {
+                JSONValue[.string] result;
+                foreach (.string key, const Node value; node)
+                {
+                    result[key] = value.toJson(ordered);
+                }
+                return JSONValue(result);
+            }
         case sequence:
             JSONValue[] result;
             foreach (const Node value; node)
             {
-                result ~= value.toJson;
+                result ~= value.toJson(ordered);
             }
             return JSONValue(result);
         case invalid:

@@ -27,7 +27,14 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 {
     auto loader = new SchemaLoader;
     auto config = loadConfig(arguments.config);
-    auto schemas = loader.load(config.source).schemas;
+    Type[string] schemas;
+
+    foreach (source; config.source) {
+        foreach (key, type; loader.load(source).schemas) {
+            type.setSource(source);
+            schemas[key] = type;
+        }
+    }
 
     foreach (key, type; schemas)
     {
@@ -45,7 +52,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             .removeLeading("export")
             .join(".");
 
-        auto render = new Render(schemaConfig, config.source);
+        auto render = new Render(schemaConfig);
 
         bool rendered = false;
 
@@ -58,7 +65,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         {
             if (!stringType.enum_.empty)
             {
-                render.renderEnum(name, stringType.enum_, type.description);
+                render.renderEnum(name, stringType.enum_, type.source, type.description);
                 rendered = true;
             }
         }
@@ -88,6 +95,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                 }
             }
         }
+        else if (auto reference = cast(Reference) type)
+        {
+            // do nothing, we'll get it another way
+            continue;
+        }
         if (!rendered)
         {
             stderr.writefln!"Cannot render value for type %s: %s"(name, type.classinfo.name);
@@ -114,7 +126,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 
 struct Config
 {
-    string source;
+    const(string)[] source;
 
     string targetFolder;
 
@@ -163,8 +175,6 @@ class Render
 
     SchemaConfig schemaConfig;
 
-    string source;
-
     void renderObject(string key, const Type value, const string[] invariants, string description)
     {
         const name = key.split("/").back;
@@ -181,9 +191,10 @@ class Render
             {
                 auto refChildren = allOf.children.map!(a => cast(Reference) a).find!"a";
                 auto objChildren = allOf.children.map!(a => cast(ObjectType) a).find!"a";
-                auto substitute = new ObjectType;
+                auto substitute = new ObjectType(null, null);
                 string extra = null;
 
+                substitute.setSource(value.source);
                 if (!objChildren.empty)
                 {
                     auto obj = objChildren.front;
@@ -216,7 +227,7 @@ class Render
 
         if (!description.empty)
         {
-            result ~= description.renderComment(0, this.source);
+            result ~= description.renderComment(0, type.source);
         }
         result ~= format!"immutable struct %s\n{\n"(name);
         string extraTypes, members;
@@ -248,13 +259,13 @@ class Render
         types ~= result;
     }
 
-    void renderEnum(string name, string[] members, string description)
+    void renderEnum(string name, string[] members, string source, string description)
     {
         string result = "\n";
 
         if (!description.empty)
         {
-            result ~= description.renderComment(0, this.source);
+            result ~= description.renderComment(0, source);
         }
         result ~= format!"enum %s\n{\n"(name);
         foreach (member; members)
@@ -342,29 +353,13 @@ class Render
         }
         if (auto reference = cast(Reference) type)
         {
-            const typeName = reference.target.referenceToType;
-            const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
-                .chain(dirEntries("include", "*.d", SpanMode.depth))
-                .filter!(file => !file.name.endsWith("Test.d"))
-                .map!(a => a.readText)
-                .filter!(a => a.canFind(format!"struct %s\n"(typeName))
-                    || a.canFind(format!"enum %s\n"(typeName)))
-                .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
-                .array;
+            const result = resolveReference(reference);
 
-            if (matchingImports.empty)
+            if (!result.import_.isNull)
             {
-                stderr.writefln!"WARN: no import found for type %s"(reference.target);
+                imports ~= result.import_.get;
             }
-
-            if (matchingImports.length > 1)
-            {
-                stderr.writefln!"WARN: multiple module sources for %s: %s, using %s"(
-                    reference.target, matchingImports, matchingImports.front);
-            }
-
-            if (!matchingImports.empty)
-                imports ~= matchingImports.front;
+            const typeName = result.typeName;
 
             if (optional)
             {
@@ -379,6 +374,36 @@ class Render
     mixin(GenerateThis);
 }
 
+Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
+{
+    const typeName = reference.target.referenceToType;
+    const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
+        .chain(dirEntries("include", "*.d", SpanMode.depth))
+        .filter!(file => !file.name.endsWith("Test.d"))
+        .map!(a => a.readText)
+        .filter!(a => a.canFind(format!"struct %s\n"(typeName))
+            || a.canFind(format!"enum %s\n"(typeName)))
+        .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
+        .array;
+
+    if (matchingImports.empty)
+    {
+        stderr.writefln!"WARN: no import found for type %s"(reference.target);
+    }
+
+    if (matchingImports.length > 1)
+    {
+        stderr.writefln!"WARN: multiple module sources for %s: %s, using %s"(
+            reference.target, matchingImports, matchingImports.front);
+    }
+
+    if (!matchingImports.empty)
+    {
+        return typeof(return)(typeName, matchingImports.front.nullable);
+    }
+    return typeof(return)(typeName, Nullable!string());
+}
+
 alias referenceToType = target => target.split("/").back;
 
 alias asFieldName = type => chain(type.front.toLower.only, type.dropOne).toUTF8;
@@ -391,6 +416,14 @@ unittest
 
 abstract class Type
 {
+    @(This.Exclude)
+    string source;
+
+    void setSource(string source)
+    {
+        this.source = source;
+    }
+
     @(This.Default)
     string description;
 
@@ -453,6 +486,15 @@ class ObjectType : Type
     @(This.Default!null)
     string[] required;
 
+    override void setSource(string source)
+    {
+        super.setSource(source);
+        foreach (entry; properties)
+        {
+            entry.value.setSource(source);
+        }
+    }
+
     Type findKey(string key)
     {
         return properties
@@ -470,6 +512,7 @@ class ObjectType : Type
                 .map!(a => TableEntry!Type(a.key, dg(a.value)))
                 .array;
             required = this.required;
+            source = this.source;
             description = this.description;
             return value;
         }
@@ -485,9 +528,17 @@ class ArrayType : Type
     @(This.Default)
     Nullable!int minItems;
 
+    override void setSource(string source)
+    {
+        super.setSource(source);
+        this.items.setSource(source);
+    }
+
     override Type transform(Type delegate(Type) dg)
     {
-        return new ArrayType(dg(this.items), this.minItems, this.description);
+        auto transformed = new ArrayType(dg(this.items), this.minItems, this.description);
+        transformed.setSource(this.source);
+        return transformed;
     }
 
     mixin(GenerateAll);
@@ -529,9 +580,20 @@ class AllOf : Type
 {
     Type[] children;
 
+    override void setSource(string source)
+    {
+        super.setSource(source);
+        foreach (child; children)
+        {
+            child.setSource(source);
+        }
+    }
+
     override Type transform(Type delegate(Type) dg)
     {
-        return new AllOf(this.children.map!(a => dg(a)).array, this.description);
+        auto transformed = new AllOf(this.children.map!(a => dg(a)).array, this.description);
+        transformed.setSource(this.source);
+        return transformed;
     }
 
     mixin(GenerateAll);

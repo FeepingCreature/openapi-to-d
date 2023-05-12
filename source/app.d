@@ -27,32 +27,33 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 {
     auto loader = new SchemaLoader;
     auto config = loadConfig(arguments.config);
-    Type[string] schemas;
+    Type[][string] schemas;
+    string[] keysInOrder;
 
     foreach (source; config.source) {
         foreach (key, type; loader.load(source).schemas) {
             type.setSource(source);
-            schemas[key] = type;
+            schemas[key] ~= type;
+            keysInOrder ~= key;
         }
     }
 
-    foreach (key, type; schemas)
+    auto allKeysSet = keysInOrder
+        .map!(key => tuple!("key", "value")(key.keyToTypeName, true))
+        .assocArray;
+    const packagePath = config.targetFolder.pathToModule;
+
+    foreach (key; keysInOrder)
     {
-        const name = key.split("/").back;
+        const types = schemas[key];
+        const type = pickBestType(types);
+        const name = key.keyToTypeName;
         auto schemaConfig = config.schemas.get(name, SchemaConfig());
 
         if (!schemaConfig.include)
             continue;
 
-        auto outputPath = buildPath(config.targetFolder, name ~ ".d");
-        auto moduleName = outputPath
-            .stripExtension
-            .split("/")
-            .removeLeading("src")
-            .removeLeading("export")
-            .join(".");
-
-        auto render = new Render(schemaConfig);
+        auto render = new Render(schemaConfig, config.targetFolder.pathToModule, allKeysSet);
 
         bool rendered = false;
 
@@ -106,9 +107,10 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             return 1;
         }
 
+        auto outputPath = buildPath(config.targetFolder, name ~ ".d");
         auto outputFile = File(outputPath, "w");
         outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
-        outputFile.writefln!"module %s;"(moduleName);
+        outputFile.writefln!"module %s;"(outputPath.stripExtension.pathToModule);
         outputFile.writefln!"";
 
         foreach (import_; render.imports.sort.uniq)
@@ -123,6 +125,19 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     }
     return 0;
 });
+
+// If we have both a type definition for X and a link to X in another yml,
+// then ignore the reference declarations.
+const(Type) pickBestType(const Type[] list)
+{
+    auto nonReference = list.filter!(a => !cast(Reference) a);
+
+    if (!nonReference.empty)
+    {
+        return nonReference.front;
+    }
+    return list.front;
+}
 
 struct Config
 {
@@ -175,9 +190,13 @@ class Render
 
     SchemaConfig schemaConfig;
 
+    string modulePrefix;
+
+    bool[string] typesBeingGenerated;
+
     void renderObject(string key, const Type value, const string[] invariants, string description)
     {
-        const name = key.split("/").back;
+        const name = key.keyToTypeName;
 
         if (cast(ObjectType) value)
         {
@@ -206,7 +225,7 @@ class Render
                 {
                     auto reference = refChildren.front;
                     // struct, one member, aliased to this.
-                    const fieldName = reference.target.referenceToType.asFieldName;
+                    const fieldName = reference.target.keyToTypeName.asFieldName;
 
                     substitute.properties ~= TableEntry!Type(fieldName, reference);
                     substitute.required ~= fieldName;
@@ -385,12 +404,22 @@ class Render
         return format!"    %s%s %s;\n"(typeName, modifier, name);
     }
 
+    Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
+    {
+        const typeName = reference.target.keyToTypeName;
+        if (typeName in this.typesBeingGenerated)
+        {
+            return typeof(return)(typeName, Nullable!string(this.modulePrefix ~ "." ~ typeName));
+        }
+        return .resolveReference(reference);
+    }
+
     mixin(GenerateThis);
 }
 
 Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
 {
-    const typeName = reference.target.referenceToType;
+    const typeName = reference.target.keyToTypeName;
     const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
         .chain(dirEntries("include", "*.d", SpanMode.depth))
         .filter!(file => !file.name.endsWith("Test.d"))
@@ -418,7 +447,7 @@ Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Re
     return typeof(return)(typeName, Nullable!string());
 }
 
-alias referenceToType = target => target.split("/").back;
+alias keyToTypeName = target => target.split("/").back;
 
 alias asFieldName = type => chain(type.front.toLower.only, type.dropOne).toUTF8;
 
@@ -437,6 +466,18 @@ private string singularize(string name)
     }
     return name;
 }
+
+private string pathToModule(string path)
+{
+    return path
+        .split("/")
+        .filter!(a => !a.empty)
+        .removeLeading("src")
+        .removeLeading("export")
+        .join(".");
+}
+
+private alias removeLeading = (range, element) => choose(range.front == element, range.dropOne, range);
 
 abstract class Type
 {
@@ -774,8 +815,6 @@ string nullableType(string type, string modifier)
     }
     return format!"Nullable!(%s%s)"(type, modifier);
 }
-
-private alias removeLeading = (range, element) => choose(range.front == element, range.dropOne, range);
 
 private alias frontOrNull = range => range.empty ? Nullable!(ElementType!(typeof(range)))() : range.front.nullable;
 

@@ -115,7 +115,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         {
             outputFile.writefln!"import %s;"(import_);
         }
-        foreach (generatedType; render.types)
+        foreach (generatedType; render.types.retro)
         {
             outputFile.writefln!"%s"(generatedType);
         }
@@ -326,13 +326,16 @@ class Render
         }
         if (auto objectType = cast(ObjectType) type)
         {
-            imports ~= "std.json";
-            if (optional)
+            if (objectType.properties.empty)
             {
-                imports ~= "std.typecons";
-                return format!"    @(This.Default)\n    %s %s;\n"(nullableType("JSONValue", modifier), name);
+                imports ~= "std.json";
+                if (optional)
+                {
+                    imports ~= "std.typecons";
+                    return format!"    @(This.Default)\n    %s %s;\n"(nullableType("JSONValue", modifier), name);
+                }
+                return format!"    JSONValue%s %s;\n"(modifier, name);
             }
-            return format!"    JSONValue%s %s;\n"(modifier, name);
         }
         if (auto arrayType = cast(ArrayType) type)
         {
@@ -368,7 +371,18 @@ class Render
             }
             return format!"    %s%s %s;\n"(typeName, modifier, name);
         }
-        assert(false, format!"TODO %s"(type));
+
+        // render as subtype
+        const capitalizedName = name.capitalizeFirst;
+        const typeName = modifier.canFind("[]") ? capitalizedName.singularize : capitalizedName;
+
+        renderObject(typeName, type, null, null);
+        if (optional)
+        {
+            imports ~= "std.typecons";
+            return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier), name);
+        }
+        return format!"    %s%s %s;\n"(typeName, modifier, name);
     }
 
     mixin(GenerateThis);
@@ -412,6 +426,16 @@ unittest
 {
     assert("Foo".asFieldName == "foo");
     assert("FooBar".asFieldName == "fooBar");
+}
+
+// Quick and dirty plural to singular conversion.
+private string singularize(string name)
+{
+    if (name.endsWith("s"))
+    {
+        return name.dropBack(1);
+    }
+    return name;
 }
 
 abstract class Type
@@ -762,6 +786,8 @@ private alias screamingSnakeToCamelCase = a => a
     .join;
 
 private alias capitalizeAllButFirst = range => chain(range.front.only, range.drop(1).map!capitalize);
+
+private alias capitalizeFirst = range => chain(range.front.toUpper.only, range.drop(1)).toUTF8;
 
 unittest
 {

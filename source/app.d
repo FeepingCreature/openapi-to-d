@@ -59,7 +59,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 
         if (cast(ObjectType) type)
         {
-            render.renderObject(key, type, schemaConfig.invariant_, type.description);
+            render.types ~= render.renderObject(key, type, schemaConfig.invariant_, type.description);
             rendered = true;
         }
         else if (auto stringType = cast(StringType) type)
@@ -79,7 +79,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                     // Looks like an event. Just render 'data'.
                     if (auto dataObj = objectType.findKey("data"))
                     {
-                        render.renderObject(key, dataObj, schemaConfig.invariant_, type.description);
+                        render.types ~= render.renderObject(key, dataObj, schemaConfig.invariant_, type.description);
                         rendered = true;
                         break;
                     }
@@ -91,7 +91,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                 if (allOf.children.count!(a => cast(Reference) a) == 1
                     && allOf.children.count!(a => cast(ObjectType) a) == 1)
                 {
-                    render.renderObject(key, type, schemaConfig.invariant_, type.description);
+                    render.types ~= render.renderObject(key, type, schemaConfig.invariant_, type.description);
                     rendered = true;
                 }
             }
@@ -117,9 +117,10 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         {
             outputFile.writefln!"import %s;"(import_);
         }
+        outputFile.writefln!"";
         foreach (generatedType; render.types.retro)
         {
-            outputFile.writefln!"%s"(generatedType);
+            outputFile.write(generatedType);
         }
         outputFile.close;
     }
@@ -194,14 +195,13 @@ class Render
 
     bool[string] typesBeingGenerated;
 
-    void renderObject(string key, const Type value, const string[] invariants, string description)
+    string renderObject(string key, const Type value, const string[] invariants, string description)
     {
         const name = key.keyToTypeName;
 
         if (cast(ObjectType) value)
         {
-            renderStruct(name, value, invariants, description);
-            return;
+            return renderStruct(name, value, invariants, description);
         }
         if (auto allOf = cast(AllOf) value)
         {
@@ -231,18 +231,19 @@ class Render
                     substitute.required ~= fieldName;
                     extra = format!"alias %s this;"(fieldName);
                 }
-                renderStruct(name, substitute, invariants, description, extra);
-                return;
+                return renderStruct(name, substitute, invariants, description, extra);
             }
         }
-        stderr.writefln!"WARN: not renderable %s; %s"(key, value.classinfo.name);
+        stderr.writefln!"ERR: not renderable %s; %s"(key, value.classinfo.name);
+        assert(false);
     }
 
-    void renderStruct(string name, const Type type, const string[] invariants, string description, string extra = null)
+    string renderStruct(string name, const Type type, const string[] invariants, string description,
+        string extra = null)
     in (cast(ObjectType) type)
     {
         auto objectType = cast(ObjectType) type;
-        string result = "\n";
+        string result;
 
         if (!description.empty)
         {
@@ -274,13 +275,13 @@ class Render
             result ~= "    @disable this();\n\n";
         }
         result ~= "    mixin(GenerateAll);\n";
-        result ~= "}";
-        types ~= result;
+        result ~= "}\n";
+        return result;
     }
 
     void renderEnum(string name, string[] members, string source, string description)
     {
-        string result = "\n";
+        string result;
 
         if (!description.empty)
         {
@@ -291,7 +292,7 @@ class Render
         {
             result ~= "    " ~ member.screamingSnakeToCamelCase ~ ",\n";
         }
-        result ~= "}";
+        result ~= "}\n";
         types ~= result;
     }
 
@@ -395,7 +396,7 @@ class Render
         const capitalizedName = name.capitalizeFirst;
         const typeName = modifier.canFind("[]") ? capitalizedName.singularize : capitalizedName;
 
-        renderObject(typeName, type, null, null);
+        extraTypes ~= renderObject(typeName, type, null, null).indent ~ "\n";
         if (optional)
         {
             imports ~= "std.typecons";
@@ -478,6 +479,19 @@ private string pathToModule(string path)
 }
 
 private alias removeLeading = (range, element) => choose(range.front == element, range.dropOne, range);
+
+string indent(string text)
+{
+    string indentLine(string line)
+    {
+        return "    " ~ line;
+    }
+
+    return text
+        .split("\n")
+        .map!(a => a.empty ? a : indentLine(a))
+        .join("\n");
+}
 
 abstract class Type
 {

@@ -307,8 +307,7 @@ class Render
                 {
                     return format!"    @(This.Default!%s)\n    bool %s;\n"(booleanType.default_.get, name);
                 }
-                imports ~= "std.typecons";
-                return format!"    @(This.Default)\n    Nullable!bool %s;\n"(name);
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableType("bool", "", false), name);
             }
             return format!"    bool%s %s;\n"(modifier, name);
         }
@@ -339,8 +338,8 @@ class Render
 
             if (optional)
             {
-                imports ~= "std.typecons";
-                return format!"%s    @(This.Default)\n    %s %s;\n"(udaPrefix, nullableType(actualType, modifier), name);
+                return format!"%s    @(This.Default)\n    %s %s;\n"(
+                    udaPrefix, nullableType(actualType, modifier, true), name);
             }
             return format!"%s    %s%s %s;\n"(udaPrefix, actualType, modifier, name);
         }
@@ -351,8 +350,7 @@ class Render
                 imports ~= "std.json";
                 if (optional)
                 {
-                    imports ~= "std.typecons";
-                    return format!"    @(This.Default)\n    %s %s;\n"(nullableType("JSONValue", modifier), name);
+                    return format!"    @(This.Default)\n    %s %s;\n"(nullableType("JSONValue", modifier, true), name);
                 }
                 return format!"    JSONValue%s %s;\n"(modifier, name);
             }
@@ -386,21 +384,19 @@ class Render
 
             if (optional)
             {
-                imports ~= "std.typecons";
-                return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier), name);
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, true), name);
             }
             return format!"    %s%s %s;\n"(typeName, modifier, name);
         }
 
         // render as subtype
         const capitalizedName = name.capitalizeFirst;
-        const typeName = modifier.canFind("[]") ? capitalizedName.singularize : capitalizedName;
+        const typeName = modifier.isArrayModifier ? capitalizedName.singularize : capitalizedName;
 
         extraTypes ~= renderObject(typeName, type, null, null).indent ~ "\n";
         if (optional)
         {
-            imports ~= "std.typecons";
-            return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier), name);
+            return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, true), name);
         }
         return format!"    %s%s %s;\n"(typeName, modifier, name);
     }
@@ -415,7 +411,27 @@ class Render
         return .resolveReference(reference);
     }
 
+    private string nullableType(string type, string modifier, bool allowNullInit)
+    {
+        if (allowNullInit && modifier.isArrayModifier)
+        {
+            // we can just use the type itself as the nullable type
+            return type ~ modifier;
+        }
+        imports ~= "std.typecons";
+        if (modifier.empty)
+        {
+            return format!"Nullable!%s"(type);
+        }
+        return format!"Nullable!(%s%s)"(type, modifier);
+    }
+
     mixin(GenerateThis);
+}
+
+private bool isArrayModifier(string modifier)
+{
+    return modifier.endsWith("[]");
 }
 
 Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
@@ -819,15 +835,6 @@ JSONValue toJson(const Node node, Flag!"ordered" ordered)
         case invalid:
             assert(false);
     }
-}
-
-string nullableType(string type, string modifier)
-{
-    if (modifier.empty)
-    {
-        return format!"Nullable!%s"(type);
-    }
-    return format!"Nullable!(%s%s)"(type, modifier);
 }
 
 private alias frontOrNull = range => range.empty ? Nullable!(ElementType!(typeof(range)))() : range.front.nullable;

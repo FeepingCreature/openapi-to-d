@@ -199,9 +199,9 @@ class Render
     {
         const name = key.keyToTypeName;
 
-        if (cast(ObjectType) value)
+        if (auto objectType = cast(ObjectType) value)
         {
-            return renderStruct(name, value, invariants, description);
+            return renderStruct(name, objectType, invariants, description);
         }
         if (auto allOf = cast(AllOf) value)
         {
@@ -238,26 +238,41 @@ class Render
         assert(false);
     }
 
-    string renderStruct(string name, const Type type, const string[] invariants, string description,
+    string renderStruct(string name, ObjectType objectType, const(string)[] invariants, string description,
         string extra = null)
-    in (cast(ObjectType) type)
     {
-        auto objectType = cast(ObjectType) type;
         string result;
 
         if (!description.empty)
         {
-            result ~= description.renderComment(0, type.source);
+            result ~= description.renderComment(0, objectType.source);
         }
         result ~= format!"immutable struct %s\n{\n"(name);
         string extraTypes, members;
         foreach (tableEntry; objectType.properties)
         {
             const required = objectType.required.canFind(tableEntry.key);
+            const optional = !required;
+            const allowNull = true;
 
-            members ~= renderMember(tableEntry.key.fixReservedIdentifiers, tableEntry.value, !required, extraTypes);
+            members ~= renderMember(tableEntry.key.fixReservedIdentifiers, tableEntry.value,
+                optional, allowNull, extraTypes);
             members ~= "\n";
         }
+        if (!objectType.additionalProperties.isNull)
+        {
+            Type elementType = objectType.additionalProperties.get.type;
+            Nullable!int minProperties = objectType.additionalProperties.get.minProperties;
+            const optional = false, allowNull = true;
+
+            members ~= renderMember("additionalProperties", elementType, optional, allowNull, extraTypes, "[string]");
+            members ~= "\n";
+            if (!minProperties.isNull)
+            {
+                invariants ~= format!"this.additionalProperties.length >= %s"(minProperties.get);
+            }
+        }
+
         result ~= extraTypes;
         result ~= members;
         foreach (invariant_; invariants)
@@ -273,6 +288,10 @@ class Render
             // disabling this() on a struct with all-optional fields
             // results in an unconstructable type
             result ~= "    @disable this();\n\n";
+        }
+        if (!objectType.additionalProperties.isNull)
+        {
+            result ~= "    alias additionalProperties this;\n\n";
         }
         result ~= "    mixin(GenerateAll);\n";
         result ~= "}\n";
@@ -296,7 +315,8 @@ class Render
         types ~= result;
     }
 
-    string renderMember(string name, Type type, bool optional, ref string extraTypes, string modifier = "")
+    string renderMember(string name, Type type, bool optional, bool allowNull, ref string extraTypes,
+        string modifier = "")
     {
         if (auto booleanType = cast(BooleanType) type)
         {
@@ -307,7 +327,8 @@ class Render
                 {
                     return format!"    @(This.Default!%s)\n    bool %s;\n"(booleanType.default_.get, name);
                 }
-                return format!"    @(This.Default)\n    %s %s;\n"(nullableType("bool", "", false), name);
+                const fieldAllowNull = false;
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableType("bool", "", fieldAllowNull), name);
             }
             return format!"    bool%s %s;\n"(modifier, name);
         }
@@ -339,7 +360,7 @@ class Render
             if (optional)
             {
                 return format!"%s    @(This.Default)\n    %s %s;\n"(
-                    udaPrefix, nullableType(actualType, modifier, true), name);
+                    udaPrefix, nullableType(actualType, modifier, allowNull), name);
             }
             return format!"%s    %s%s %s;\n"(udaPrefix, actualType, modifier, name);
         }
@@ -350,14 +371,17 @@ class Render
                 imports ~= "std.json";
                 if (optional)
                 {
-                    return format!"    @(This.Default)\n    %s %s;\n"(nullableType("JSONValue", modifier, true), name);
+                    return format!"    @(This.Default)\n    %s %s;\n"(
+                        nullableType("JSONValue", modifier, allowNull), name);
                 }
                 return format!"    JSONValue%s %s;\n"(modifier, name);
             }
         }
         if (auto arrayType = cast(ArrayType) type)
         {
-            const member = renderMember(name, arrayType.items, optional, extraTypes, modifier ~ "[]");
+            // if we want an invariant, we must allow Nullable.
+            const allowElementNull = arrayType.minItems.isNull;
+            const member = renderMember(name, arrayType.items, optional, allowElementNull, extraTypes, modifier ~ "[]");
 
             if (!arrayType.minItems.isNull)
             {
@@ -384,7 +408,7 @@ class Render
 
             if (optional)
             {
-                return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, true), name);
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, allowNull), name);
             }
             return format!"    %s%s %s;\n"(typeName, modifier, name);
         }
@@ -396,7 +420,7 @@ class Render
         extraTypes ~= renderObject(typeName, type, null, null).indent ~ "\n";
         if (optional)
         {
-            return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, true), name);
+            return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, allowNull), name);
         }
         return format!"    %s%s %s;\n"(typeName, modifier, name);
     }
@@ -562,7 +586,21 @@ in (value.type == JSONType.array)
     assert(false, format!"I don't know what this is: %s"(value));
 }
 
+AdditionalProperties decode(T : AdditionalProperties)(const JSONValue value)
+in (value.type == JSONType.array)
+{
+    auto type = decode!Type(value);
+    auto additionalProperties = Nullable!int();
+
+    if (value.hasKey("minProperties"))
+    {
+        additionalProperties = value.getEntry("minProperties").decodeJson!int;
+    }
+    return new AdditionalProperties(type, additionalProperties);
+}
+
 private alias _ = decode!Type;
+private alias _ = decode!AdditionalProperties;
 
 struct TableEntry(T)
 {
@@ -580,6 +618,9 @@ class ObjectType : Type
 
     @(This.Default!null)
     string[] required;
+
+    @(This.Default)
+    Nullable!AdditionalProperties additionalProperties;
 
     override void setSource(string source)
     {
@@ -609,9 +650,20 @@ class ObjectType : Type
             required = this.required;
             source = this.source;
             description = this.description;
+            additionalProperties = this.additionalProperties;
             return value;
         }
     }
+
+    mixin(GenerateAll);
+}
+
+class AdditionalProperties
+{
+    Type type;
+
+    @(This.Default)
+    Nullable!int minProperties;
 
     mixin(GenerateAll);
 }

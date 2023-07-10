@@ -368,6 +368,22 @@ class Render
         {
             if (objectType.properties.empty)
             {
+                // string[string] object
+                if (objectType.additionalProperties.apply!(a => cast(StringType) a.type !is null).get(false))
+                {
+                    string prefix = null;
+                    string typeStr = "string[string]";
+                    if (optional)
+                    {
+                        prefix ~= "    @(This.Default)\n";
+                        typeStr = nullableType("string", "[string]", allowNull);
+                    }
+                    if (objectType.additionalProperties.get.minProperties.apply!(a => a == 1).get(false))
+                    {
+                        prefix ~= "    @NonEmpty\n";
+                    }
+                    return format!"%s    %s%s %s;\n"(prefix, typeStr, modifier, name);
+                }
                 imports ~= "std.json";
                 if (optional)
                 {

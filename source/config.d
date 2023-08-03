@@ -40,7 +40,7 @@ struct Config
     SchemaConfig[string] schemas;
 
     @(This.Default)
-    RouteConfig[string] routes;
+    OperationConfig[string] operations;
 
     mixin(GenerateAll);
 }
@@ -56,7 +56,7 @@ struct SchemaConfig
     mixin(GenerateAll);
 }
 
-struct RouteConfig
+struct OperationConfig
 {
     @(This.Default!true)
     bool include = true;

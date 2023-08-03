@@ -137,7 +137,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     foreach (file; files)
     {
         auto routes = file.routes
-            .filter!(a => config.routes.get(a.operationId, RouteConfig()).include)
+            .filter!(a => config.operations.get(a.operationId, OperationConfig()).include)
             .array;
 
         if (routes.empty)

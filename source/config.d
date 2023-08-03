@@ -30,9 +30,17 @@ struct Config
 {
     const(string)[] source;
 
-    string targetFolder;
+    // Where component types are turned into structs
+    string componentFolder;
 
+    // Where services are generated as interfaces
+    string serviceFolder;
+
+    @(This.Default)
     SchemaConfig[string] schemas;
+
+    @(This.Default)
+    RouteConfig[string] routes;
 
     mixin(GenerateAll);
 }
@@ -44,6 +52,14 @@ struct SchemaConfig
 
     @(This.Default)
     const(string)[] invariant_;
+
+    mixin(GenerateAll);
+}
+
+struct RouteConfig
+{
+    @(This.Default!true)
+    bool include = true;
 
     mixin(GenerateAll);
 }

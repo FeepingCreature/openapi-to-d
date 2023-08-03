@@ -5,6 +5,7 @@ import boilerplate;
 import config;
 import dyaml;
 import render;
+import route;
 import std.algorithm;
 import std.array;
 import std.file;
@@ -33,10 +34,13 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     auto config = loadConfig(arguments.config);
     Type[][string] schemas;
     string[] keysInOrder;
+    OpenApiFile[] files = config.source.map!(a => loader.load(a)).array;
 
-    foreach (source; config.source) {
-        foreach (key, type; loader.load(source).schemas) {
-            type.setSource(source);
+    foreach (file; files)
+    {
+        foreach (key, type; file.schemas)
+        {
+            type.setSource(file.path);
             schemas[key] ~= type;
             keysInOrder ~= key;
         }
@@ -45,8 +49,8 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     auto allKeysSet = keysInOrder
         .map!(key => tuple!("key", "value")(key.keyToTypeName, true))
         .assocArray;
-    const packagePath = config.targetFolder.pathToModule;
 
+    // write domain files
     foreach (key; keysInOrder)
     {
         const types = schemas[key];
@@ -57,7 +61,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         if (!schemaConfig.include)
             continue;
 
-        auto render = new Render(schemaConfig, config.targetFolder.pathToModule, allKeysSet);
+        auto render = new Render(config.componentFolder.pathToModule, allKeysSet);
 
         bool rendered = false;
 
@@ -111,8 +115,9 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             return 1;
         }
 
-        auto outputPath = buildPath(config.targetFolder, name ~ ".d");
+        auto outputPath = buildPath(config.componentFolder, name ~ ".d");
         auto outputFile = File(outputPath, "w");
+
         outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
         outputFile.writefln!"module %s;"(outputPath.stripExtension.pathToModule);
         outputFile.writefln!"";
@@ -128,6 +133,44 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         }
         outputFile.close;
     }
+    // write service files
+    foreach (file; files)
+    {
+        auto routes = file.routes
+            .filter!(a => config.routes.get(a.operationId, RouteConfig()).include)
+            .array;
+
+        if (routes.empty)
+            continue;
+
+        const packagePrefix = config.serviceFolder.pathToModule;
+        const name = file.path.baseName.stripExtension.kebabToCamelCase;
+        const module_ = only(packagePrefix, name).join(".");
+        const outputPath = buildPath(config.serviceFolder, name ~ ".d");
+        auto outputFile = File(outputPath, "w");
+
+        auto render = new Render(config.componentFolder.pathToModule, allKeysSet);
+
+        render.types ~= render.renderRoutes(name, file.path, file.description, routes, file.parameters);
+
+        // TODO render method writeToFile
+        outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
+        outputFile.writefln!"module %s;"(module_);
+        outputFile.writefln!"";
+
+        foreach (import_; render.imports.sort.uniq)
+        {
+            outputFile.writefln!"import %s;"(import_);
+        }
+        outputFile.writefln!"";
+        foreach (generatedType; render.types.retro)
+        {
+            outputFile.write(generatedType);
+        }
+
+        outputFile.close;
+    }
+
     return 0;
 });
 
@@ -156,59 +199,29 @@ private string pathToModule(string path)
 
 private alias removeLeading = (range, element) => choose(range.front == element, range.dropOne, range);
 
-Type decode(T)(const JSONValue value)
-if (is(T == Type))
-in (value.type == JSONType.array)
-{
-    string type = value.hasKey("type") ? value.getEntry("type").str : null;
-    if (value.hasKey("allOf"))
-    {
-        const description = value.hasKey("description") ? value.getEntry("description").str : null;
-
-        return new AllOf(value.getEntry("allOf").decodeJson!(Type[], .decode), description);
-    }
-    if (value.hasKey("$ref"))
-    {
-        return new Reference(value.getEntry("$ref").decodeJson!string);
-    }
-    if (type == "object" || type.empty && value.hasKey("properties"))
-    {
-        return value.toObject.decodeJson!(ObjectType, .decode);
-    }
-    if (type == "string")
-    {
-        return value.toObject.decodeJson!(StringType, .decode);
-    }
-    if (type == "array")
-    {
-        return value.toObject.decodeJson!(ArrayType, .decode);
-    }
-    if (type == "bool" || type == "boolean")
-    {
-        return value.toObject.decodeJson!(BooleanType, .decode);
-    }
-    assert(false, format!"I don't know what this is: %s"(value));
-}
-
-AdditionalProperties decode(T : AdditionalProperties)(const JSONValue value)
-in (value.type == JSONType.array)
-{
-    auto type = decode!Type(value);
-    auto additionalProperties = Nullable!int();
-
-    if (value.hasKey("minProperties"))
-    {
-        additionalProperties = value.getEntry("minProperties").decodeJson!int;
-    }
-    return new AdditionalProperties(type, additionalProperties);
-}
-
-private alias _ = decode!Type;
-private alias _ = decode!AdditionalProperties;
-
 class OpenApiFile
 {
+    string path;
+
+    string description;
+
+    Route[] routes;
+
     Type[string] schemas;
+
+    Parameter[string] parameters;
+
+    mixin(GenerateAll);
+}
+
+struct RouteDto
+{
+    string summary;
+
+    string operationId;
+
+    @(This.Default)
+    Parameter[] parameters;
 
     mixin(GenerateAll);
 }
@@ -224,15 +237,79 @@ class SchemaLoader
         {
             const root = Loader.fromFile(path).load;
             const JSONValue jsonValue = root.toJson(Yes.ordered);
-            Type[string] result = null;
+            Route[] routes = null;
+            Type[string] schemas = null;
+            Parameter[string] parameters = null;
+
+            if (jsonValue.hasKey("paths"))
+            {
+                foreach (JSONValue pair; jsonValue.getEntry("paths").array)
+                {
+                    const url_ = pair["key"].str;
+                    const routeJson = pair["value"].toObject.object;
+
+                    auto routeParametersJson = routeJson.get("parameters", JSONValue((JSONValue[]).init));
+                    auto routeParameters_ = routeParametersJson.decodeJson!(Parameter[], route.decode);
+
+                    foreach (string method_, JSONValue endpoint; routeJson)
+                    {
+                        if (method_ == "parameters")
+                            continue;
+
+                        auto routeDto = endpoint.toObject.decodeJson!(RouteDto, route.decode);
+
+                        Type schema_ = null;
+                        if (endpoint.hasKey("requestBody"))
+                        {
+                            schema_ = endpoint.getEntry("requestBody")
+                                .getEntry("content")
+                                .getEntry("application/json")
+                                .getEntry("schema")
+                                .decodeJson!(Type, types.decode);
+                        }
+                        string[] responseCodes_ = endpoint.getEntry("responses").array
+                            .map!(pair => pair["key"].str)
+                            .array;
+
+                        with (Route.Builder())
+                        {
+                            url = url_;
+                            method = method_;
+                            summary = routeDto.summary;
+                            operationId = routeDto.operationId;
+                            schema = schema_;
+                            parameters = routeParameters_ ~ routeDto.parameters;
+                            responseCodes = responseCodes_;
+                            routes ~= builderValue;
+                        }
+                    }
+                }
+            }
+
+            string description = null;
+            if (jsonValue.hasKey("info"))
+            {
+                description = jsonValue.getEntry("info").getEntry("description").str;
+            }
 
             foreach (JSONValue pair; jsonValue.getEntry("components").getEntry("schemas").array)
             {
                 const key = pair["key"].str;
 
-                result[format!"components/schemas/%s"(key)] = pair["value"].decodeJson!(Type, decode);
+                schemas[format!"components/schemas/%s"(key)] = pair["value"]
+                    .decodeJson!(Type, types.decode);
             }
-            this.files[path] = new OpenApiFile(result);
+            if (jsonValue.getEntry("components").hasKey("parameters"))
+            {
+                foreach (JSONValue pair; jsonValue.getEntry("components").getEntry("parameters").array)
+                {
+                    const key = pair["key"].str;
+
+                    parameters[format!"components/parameters/%s"(key)] = pair["value"]
+                        .decodeJson!(Parameter, route.decode);
+                }
+            }
+            this.files[path] = new OpenApiFile(path, description, routes, schemas, parameters);
         }
         return this.files[path];
     }
@@ -244,39 +321,15 @@ alias valueObjectify = (string[] range) => range.front.valueObjectify.only.chain
 alias valueObjectify = (string line) => format!"This immutable value type represents %s"(
     line.front.toLower.only.chain(line.dropOne));
 
-bool hasKey(JSONValue table, string key)
-in (table.isTable)
+private alias kebabToCamelCase = text => text
+    .splitter("-")
+    .map!capitalizeFirst
+    .join;
+
+unittest
 {
-    return table.array.any!(a => a["key"] == JSONValue(key));
+    assert("foo".kebabToCamelCase == "Foo");
+    assert("foo-bar".kebabToCamelCase == "FooBar");
 }
 
-JSONValue getEntry(JSONValue table, string key)
-in (table.isTable)
-{
-    foreach (value; table.array)
-    {
-        if (value["key"].str == key)
-        {
-            return value["value"];
-        }
-    }
-    assert(false, format!"No key %s in table %s"(key, table));
-}
-
-JSONValue toObject(JSONValue table)
-in (table.isTable)
-{
-    JSONValue[string] result;
-    foreach (value; table.array)
-    {
-        result[value["key"].str] = value["value"];
-    }
-    return JSONValue(result);
-}
-
-bool isTable(JSONValue value)
-{
-    return value.type == JSONType.array && value.array.all!(
-        a => a.type == JSONType.object && a.object.length == 2
-            && "key" in a && "value" in a && a["key"].type == JSONType.string);
-}
+private alias capitalizeFirst = range => chain(range.front.toUpper.only, range.drop(1)).toUTF8;

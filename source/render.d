@@ -2,8 +2,11 @@ module render;
 
 import boilerplate;
 import config;
+import reverseResponseCodes;
+import route;
 import std.algorithm;
 import std.array;
+import std.exception;
 import std.file;
 import std.format;
 import std.path;
@@ -22,8 +25,6 @@ class Render
 
     @(This.Default)
     string[] types;
-
-    SchemaConfig schemaConfig;
 
     string modulePrefix;
 
@@ -275,6 +276,134 @@ class Render
         return format!"    %s%s %s;\n"(typeName, modifier, name);
     }
 
+    string renderRoutes(string name, string source, string description, const Route[] routes,
+        const Parameter[string] parameterComponents)
+    {
+        string[] lines;
+        string[] extraTypes;
+
+        imports ~= "messaging.Context : Context";
+        imports ~= "net.http.ResponseCode";
+        imports ~= "net.rest.Method";
+
+        lines ~= "/**";
+        lines ~= linebreak(" * ", " * ", ["This boundary interface has been generated from ", source ~ ":"]);
+        lines ~= description.split("\n").map!strip.strip!(a => a.empty).map!(a => stripRight(" * " ~ a)).array;
+        lines ~= " */";
+        lines ~= format!"interface %s"(name);
+        lines ~= "{";
+        foreach (i, route; routes)
+        {
+            const availableParameters = route.parameters
+                .map!(a => resolveParameter(a, parameterComponents))
+                .filter!(a => a.in_ == "path")
+                .array;
+
+            const(ValueParameter) findParameterWithName(string name)
+            {
+                enforce(availableParameters.any!(a => a.name == name),
+                    format!"route parameter with name \"%s\" not found"(name));
+                return availableParameters.find!(a => a.name == name).front;
+            }
+
+            const urlParameters = route.url.split("/")
+                .filter!(a => a.startsWith("{") && a.endsWith("}"))
+                .map!(name => findParameterWithName(name.dropOne.dropBackOne))
+                .array;
+            string[] dParameters = null;
+
+            foreach (urlParameter; urlParameters)
+            {
+                const type = urlParameter.schema;
+
+                if (auto refType = cast(Reference) type)
+                {
+                    const result = resolveReference(refType);
+
+                    if (!result.import_.isNull)
+                    {
+                        imports ~= result.import_.get;
+                    }
+                    dParameters ~= format!"const %s %s"(result.typeName, urlParameter.name);
+                }
+                else if (auto strType = cast(StringType) type)
+                {
+                    dParameters ~= format!"const string %s"(urlParameter.name);
+                }
+                else
+                {
+                    assert(false, format!"Type currently unsupported for URL parameters: %s"(type));
+                }
+            }
+
+            string bodyType = "void";
+
+            if (route.schema)
+            {
+                if (auto refType = cast(Reference) route.schema)
+                {
+                    const result = resolveReference(refType);
+
+                    if (!result.import_.isNull)
+                    {
+                        imports ~= result.import_.get;
+                    }
+                    bodyType = result.typeName;
+                }
+                else
+                {
+                    bodyType = route.operationId.capitalizeFirst;
+                    extraTypes ~= "\n" ~ renderObject(bodyType, route.schema, null, null);
+                }
+                dParameters ~= "const " ~ bodyType;
+            }
+
+            if (i > 0) lines ~= "";
+            lines ~= format!"    /// %s"(route.summary);
+            lines ~= linebreak((4).spaces, (12).spaces, [
+                format!"@(Method.%s!("(route.method.capitalizeFirst),
+                "JsonFormat, ",
+                format!"%s, "(route.schema ? bodyType : "void"),
+                format!"\"%s\"))"(route.url),
+            ]);
+            foreach (responseCode; route.responseCodes)
+            {
+                if (responseCode.startsWith("2")) continue;
+                // produced by the networking lib
+                if (responseCode == "422") continue;
+
+                const member = codeToMember(responseCode);
+                const exception = pickException(responseCode);
+
+                lines ~= format!"    @(Throws!(%s, ResponseCode.%s.expand))"(exception, member);
+            }
+            lines ~= linebreak((4).spaces, (8).spaces, [
+                format!"public void %s("(route.operationId),
+            ] ~ dParameters.map!(a => a ~ ", ").array ~ [
+                "const Context context);"
+            ]);
+        }
+        lines ~= "}";
+        // retro to counteract retro in app.d (sorry)
+        types ~= extraTypes.retro.array;
+        return lines.join("\n") ~ "\n";
+    }
+
+    private string pickException(string responseCode)
+    {
+        string from(string package_, string member)
+        {
+            imports ~= package_;
+            return member;
+        }
+        switch (responseCode)
+        {
+            case "404": return from("util.NoSuchElementException", "NoSuchElementException");
+            case "409": return from("util.IllegalArgumentException", "IllegalArgumentException");
+            default: return from("std.exception", "Exception");
+        }
+    }
+
     Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
     {
         const typeName = reference.target.keyToTypeName;
@@ -301,6 +430,50 @@ class Render
     }
 
     mixin(GenerateThis);
+}
+
+// Given a list of fragments, linebreak and indent them to avoid exceeding 120 columns per line.
+private string[] linebreak(string firstLineIndent, string restLineIndent, string[] fragments)
+{
+    string[] lines = null;
+    string line = null;
+
+    string lineIndent() { return lines.empty ? firstLineIndent : restLineIndent; }
+
+    void flush()
+    {
+        if (line.empty) return;
+        lines ~= (lineIndent ~ line.stripLeft).stripRight;
+        line = null;
+    }
+
+    foreach (fragment; fragments)
+    {
+        if (lineIndent.length + line.length + fragment.length > 120) flush;
+        line ~= fragment;
+    }
+    flush;
+    return lines;
+}
+
+private const(ValueParameter) resolveParameter(const Parameter param, const Parameter[string] components)
+{
+    if (auto reference = cast(RefParameter) param)
+    {
+        enforce(reference.target.startsWith("#/"), format!"cannot resolve indirect $ref parameter (TODO) \"%s\""(
+            reference.target));
+
+        const target = reference.target["#/".length .. $];
+
+        enforce(target in components,
+            format!"cannot find target for $ref parameter \"%s\""(reference.target));
+        return components[target].resolveParameter(components);
+    }
+    if (auto valParameter = cast(ValueParameter) param)
+    {
+        return valParameter;
+    }
+    assert(false, format!"Unknown parameter type %s"(param.classinfo.name));
 }
 
 private Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
@@ -427,7 +600,7 @@ private string indent(string text)
 {
     string indentLine(string line)
     {
-        return "    " ~ line;
+        return (4).spaces ~ line;
     }
 
     return text
@@ -435,3 +608,5 @@ private string indent(string text)
         .map!(a => a.empty ? a : indentLine(a))
         .join("\n");
 }
+
+private alias spaces = i => ' '.repeat(i).array.idup;

@@ -1,6 +1,8 @@
 module ToJson;
 
 import dyaml;
+import std.algorithm;
+import std.format;
 import std.json;
 import std.typecons;
 
@@ -45,4 +47,41 @@ JSONValue toJson(const Node node, Flag!"ordered" ordered)
         case invalid:
             assert(false);
     }
+}
+
+bool hasKey(JSONValue table, string key)
+in (table.isTable)
+{
+    return table.array.any!(a => a["key"] == JSONValue(key));
+}
+
+JSONValue getEntry(JSONValue table, string key)
+in (table.isTable)
+{
+    foreach (value; table.array)
+    {
+        if (value["key"].str == key)
+        {
+            return value["value"];
+        }
+    }
+    assert(false, format!"No key %s in table %s"(key, table));
+}
+
+JSONValue toObject(JSONValue table)
+in (table.isTable)
+{
+    JSONValue[string] result;
+    foreach (value; table.array)
+    {
+        result[value["key"].str] = value["value"];
+    }
+    return JSONValue(result);
+}
+
+bool isTable(JSONValue value)
+{
+    return value.type == JSONType.array && value.array.all!(
+        a => a.type == JSONType.object && a.object.length == 2
+            && "key" in a && "value" in a && a["key"].type == JSONType.string);
 }

@@ -3,8 +3,12 @@ module types;
 import boilerplate;
 import std.algorithm;
 import std.array;
+import std.format;
+import std.json;
 import std.range;
 import std.typecons;
+import text.json.Decode;
+import ToJson;
 
 abstract class Type
 {
@@ -24,6 +28,56 @@ abstract class Type
 
     mixin(GenerateAll);
 }
+
+Type decode(T)(const JSONValue value)
+if (is(T == Type))
+in (value.type == JSONType.array)
+{
+    string type = value.hasKey("type") ? value.getEntry("type").str : null;
+    if (value.hasKey("allOf"))
+    {
+        const description = value.hasKey("description") ? value.getEntry("description").str : null;
+
+        return new AllOf(value.getEntry("allOf").decodeJson!(Type[], .decode), description);
+    }
+    if (value.hasKey("$ref"))
+    {
+        return new Reference(value.getEntry("$ref").decodeJson!string);
+    }
+    if (type == "object" || type.empty && value.hasKey("properties"))
+    {
+        return value.toObject.decodeJson!(ObjectType, .decode);
+    }
+    if (type == "string")
+    {
+        return value.toObject.decodeJson!(StringType, .decode);
+    }
+    if (type == "array")
+    {
+        return value.toObject.decodeJson!(ArrayType, .decode);
+    }
+    if (type == "bool" || type == "boolean")
+    {
+        return value.toObject.decodeJson!(BooleanType, .decode);
+    }
+    assert(false, format!"I don't know what this is: %s"(value));
+}
+
+AdditionalProperties decode(T : AdditionalProperties)(const JSONValue value)
+in (value.type == JSONType.array)
+{
+    auto type = decode!Type(value);
+    auto additionalProperties = Nullable!int();
+
+    if (value.hasKey("minProperties"))
+    {
+        additionalProperties = value.getEntry("minProperties").decodeJson!int;
+    }
+    return new AdditionalProperties(type, additionalProperties);
+}
+
+private alias _ = decode!Type;
+private alias _ = decode!AdditionalProperties;
 
 struct TableEntry(T)
 {

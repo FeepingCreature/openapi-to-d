@@ -40,6 +40,16 @@ in (value.type == JSONType.array)
 
         return new AllOf(value.getEntry("allOf").decodeJson!(Type[], .decode), description);
     }
+    if (value.hasKey("oneOf"))
+    {
+        const description = value.hasKey("description") ? value.getEntry("description").str : null;
+
+        return new OneOf(value.getEntry("oneOf").decodeJson!(Type[], .decode), description);
+    }
+    if (value.hasKey("enum"))
+    {
+        return new EnumType(value.getEntry("enum").decodeJson!(string[]));
+    }
     if (value.hasKey("$ref"))
     {
         return new Reference(value.getEntry("$ref").decodeJson!string);
@@ -189,6 +199,18 @@ class StringType : Type
     mixin(GenerateAll);
 }
 
+class EnumType : Type
+{
+    string[] entries;
+
+    override Type transform(Type delegate(Type) dg)
+    {
+        return this;
+    }
+
+    mixin(GenerateAll);
+}
+
 class BooleanType : Type
 {
     @(This.Default)
@@ -218,6 +240,29 @@ class AllOf : Type
     override Type transform(Type delegate(Type) dg)
     {
         auto transformed = new AllOf(this.children.map!(a => dg(a)).array, this.description);
+        transformed.setSource(this.source);
+        return transformed;
+    }
+
+    mixin(GenerateAll);
+}
+
+class OneOf : Type
+{
+    Type[] children;
+
+    override void setSource(string source)
+    {
+        super.setSource(source);
+        foreach (child; children)
+        {
+            child.setSource(source);
+        }
+    }
+
+    override Type transform(Type delegate(Type) dg)
+    {
+        auto transformed = new OneOf(this.children.map!(a => dg(a)).array, this.description);
         transformed.setSource(this.source);
         return transformed;
     }

@@ -134,41 +134,44 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         outputFile.close;
     }
     // write service files
-    foreach (file; files)
+    if (!config.serviceFolder.empty)
     {
-        auto routes = file.routes
-            .filter!(a => config.operations.get(a.operationId, OperationConfig()).include)
-            .array;
-
-        if (routes.empty)
-            continue;
-
-        const packagePrefix = config.serviceFolder.pathToModule;
-        const name = file.path.baseName.stripExtension.kebabToCamelCase;
-        const module_ = only(packagePrefix, name).join(".");
-        const outputPath = buildPath(config.serviceFolder, name ~ ".d");
-        auto outputFile = File(outputPath, "w");
-
-        auto render = new Render(config.componentFolder.pathToModule, allKeysSet);
-
-        render.types ~= render.renderRoutes(name, file.path, file.description, routes, file.parameters);
-
-        // TODO render method writeToFile
-        outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
-        outputFile.writefln!"module %s;"(module_);
-        outputFile.writefln!"";
-
-        foreach (import_; render.imports.sort.uniq)
+        foreach (file; files)
         {
-            outputFile.writefln!"import %s;"(import_);
-        }
-        outputFile.writefln!"";
-        foreach (generatedType; render.types.retro)
-        {
-            outputFile.write(generatedType);
-        }
+            auto routes = file.routes
+                .filter!(a => config.operations.get(a.operationId, OperationConfig()).include)
+                .array;
 
-        outputFile.close;
+            if (routes.empty)
+                continue;
+
+            const packagePrefix = config.serviceFolder.pathToModule;
+            const name = file.path.baseName.stripExtension.kebabToCamelCase;
+            const module_ = only(packagePrefix, name).join(".");
+            const outputPath = buildPath(config.serviceFolder, name ~ ".d");
+            auto outputFile = File(outputPath, "w");
+
+            auto render = new Render(config.componentFolder.pathToModule, allKeysSet);
+
+            render.types ~= render.renderRoutes(name, file.path, file.description, routes, file.parameters);
+
+            // TODO render method writeToFile
+            outputFile.writefln!"// GENERATED FILE, DO NOT EDIT!";
+            outputFile.writefln!"module %s;"(module_);
+            outputFile.writefln!"";
+
+            foreach (import_; render.imports.sort.uniq)
+            {
+                outputFile.writefln!"import %s;"(import_);
+            }
+            outputFile.writefln!"";
+            foreach (generatedType; render.types.retro)
+            {
+                outputFile.write(generatedType);
+            }
+
+            outputFile.close;
+        }
     }
 
     return 0;

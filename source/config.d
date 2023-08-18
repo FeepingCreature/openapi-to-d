@@ -34,6 +34,7 @@ struct Config
     string componentFolder;
 
     // Where services are generated as interfaces
+    @(This.Default)
     string serviceFolder;
 
     @(This.Default)

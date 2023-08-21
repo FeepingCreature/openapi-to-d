@@ -359,7 +359,7 @@ class Render
             }
 
             if (i > 0) lines ~= "";
-            lines ~= format!"    /// %s"(route.summary);
+            lines ~= route.summary.strip.split("\n").strip!(a => a.empty).renderComment(4);
             lines ~= linebreak((4).spaces, (12).spaces, [
                 format!"@(Method.%s!("(route.method.capitalizeFirst),
                 "JsonFormat, ",
@@ -508,15 +508,21 @@ private Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(
 
 private string renderComment(string comment, int indent, string source)
 {
-    const spacer = ' '.repeat(indent).array;
     const lines = [format!"This value object has been generated from %s:"(source)] ~ comment
         .strip
         .split("\n")
         .strip!(a => a.empty);
 
-    return format!"%s/**\n"(spacer)
-        ~ lines.map!(line => format!"%s * %s"(spacer, line).stripRight ~ "\n").join
-        ~ format!"%s */\n"(spacer);
+    return renderComment(lines, indent).join("\n") ~ "\n";
+}
+
+private string[] renderComment(const string[] lines, int indent)
+{
+    const spacer = ' '.repeat(indent).array;
+
+    return [format!"%s/**"(spacer)]
+        ~ lines.map!(line => format!"%s * %s"(spacer, line).stripRight).array
+        ~ format!"%s */"(spacer);
 }
 
 private bool isArrayModifier(string modifier)

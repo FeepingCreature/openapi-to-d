@@ -4,6 +4,7 @@ import boilerplate;
 import config;
 import reverseResponseCodes;
 import route;
+import SchemaLoader : SchemaLoader;
 import std.algorithm;
 import std.array;
 import std.exception;
@@ -30,6 +31,9 @@ class Render
 
     bool[string] typesBeingGenerated;
 
+    // for resolving references when inlining
+    Type[][string] schemas;
+
     string renderObject(string key, const Type value, const string[] invariants, string description)
     {
         const name = key.keyToTypeName;
@@ -40,29 +44,105 @@ class Render
         }
         if (auto allOf = cast(AllOf) value)
         {
-            if (allOf.children.count!(a => cast(Reference) a) <= 1
-                && allOf.children.count!(a => cast(ObjectType) a) <= 1)
+            auto refChildren = allOf.children.map!(a => cast(Reference) a).filter!"a".array;
+            auto objChildren = allOf.children.map!(a => cast(ObjectType) a).filter!"a".array;
+
+            if (allOf.children.length == refChildren.length + objChildren.length)
             {
-                auto refChildren = allOf.children.map!(a => cast(Reference) a).find!"a";
-                auto objChildren = allOf.children.map!(a => cast(ObjectType) a).find!"a";
+                // generate object with all refs but one inlined
                 auto substitute = new ObjectType(null, null);
                 string extra = null;
 
                 substitute.setSource(value.source);
-                if (!objChildren.empty)
+                /**
+                 * We can make exactly one ref child the alias-this.
+                 * How do we pick? Easy: Use the one with the most properties.
+                 */
+                Reference refWithMostProperties = null;
+                // Resolve all references in the course of looking for the fattest child
+                Type[string] resolvedReferences;
+                foreach (child; allOf.children)
                 {
-                    auto obj = objChildren.front;
-
-                    substitute.properties ~= obj.properties;
-                    substitute.required ~= obj.required;
+                    auto refChild = cast(Reference) child;
+                    if (!refChild)
+                        continue;
+                    Type loadSchema()
+                    {
+                        const string relPath = refChild.target.until("#/").array.toUTF8;
+                        const string schemaName = refChild.target.find("#/").drop("#/".length);
+                        if (relPath.empty)
+                        {
+                            // try to find schema in own set.
+                            assert(schemaName in this.schemas, format!"%s missing in %s"(
+                                schemaName, this.schemas.keys));
+                            return this.schemas[schemaName].pickBestType;
+                        }
+                        // We don't usually look at reference targets, so
+                        // we manually invoke the loader just this once.
+                        const string path = value.source.dirName.buildNormalizedPath(relPath);
+                        auto loader = new SchemaLoader;
+                        auto file = loader.load(path);
+                        assert(schemaName in file.schemas, format!"%s missing in %s"(
+                            schemaName, file.schemas.keys));
+                        return file.schemas[schemaName];
+                    }
+                    auto schema = loadSchema;
+                    resolvedReferences[refChild.target] = schema;
+                    if (auto obj = cast(ObjectType) schema)
+                    {
+                        if (!refWithMostProperties)
+                        {
+                            refWithMostProperties = refChild;
+                        }
+                        else if (auto oldObj = cast(ObjectType) resolvedReferences[refWithMostProperties.target])
+                        {
+                            if (obj.properties.length > oldObj.properties.length)
+                            {
+                                refWithMostProperties = refChild;
+                            }
+                        }
+                    }
                 }
-                if (!refChildren.empty)
-                {
-                    auto reference = refChildren.front;
-                    // struct, one member, aliased to this.
-                    const fieldName = reference.target.keyToTypeName.asFieldName;
 
-                    substitute.properties ~= TableEntry!Type(fieldName, reference);
+                foreach (child; allOf.children)
+                {
+                    if (auto obj = cast(ObjectType) child)
+                    {
+                        substitute.properties ~= obj.properties;
+                        substitute.required ~= obj.required;
+                    }
+                    else if (auto refChild = cast(Reference) child)
+                    {
+                        if (refChild is refWithMostProperties)
+                            continue;
+                        if (!refChild.target.canFind("#/"))
+                        {
+                            stderr.writefln!"Don't understand reference target %s"(refChild.target);
+                            assert(false);
+                        }
+
+                        auto schema = resolvedReferences[refChild.target];
+
+                        if (auto obj = cast(ObjectType) schema)
+                        {
+                            substitute.properties ~= obj.properties;
+                            substitute.required ~= obj.required;
+                        }
+                        else
+                        {
+                            stderr.writefln!"Reference %s target %s isn't an object; cannot inline"(
+                                refChild, schema);
+                            assert(false);
+                        }
+                    }
+                    else assert(false);
+                }
+                if (refWithMostProperties)
+                {
+                    // use it for the alias-this reference
+                    const fieldName = refWithMostProperties.target.keyToTypeName.asFieldName;
+
+                    substitute.properties ~= TableEntry!Type(fieldName, refWithMostProperties);
                     substitute.required ~= fieldName;
                     extra = format!"alias %s this;"(fieldName);
                 }
@@ -430,6 +510,19 @@ class Render
     }
 
     mixin(GenerateThis);
+}
+
+// If we have both a type definition for X and a link to X in another yml,
+// then ignore the reference declarations.
+Type pickBestType(Type[] list)
+{
+    auto nonReference = list.filter!(a => !cast(Reference) a);
+
+    if (!nonReference.empty)
+    {
+        return nonReference.front;
+    }
+    return list.front;
 }
 
 // Given a list of fragments, linebreak and indent them to avoid exceeding 120 columns per line.

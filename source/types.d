@@ -46,10 +46,6 @@ in (value.type == JSONType.array)
 
         return new OneOf(value.getEntry("oneOf").decodeJson!(Type[], .decode), description);
     }
-    if (value.hasKey("enum"))
-    {
-        return new EnumType(value.getEntry("enum").decodeJson!(string[]));
-    }
     if (value.hasKey("$ref"))
     {
         return new Reference(value.getEntry("$ref").decodeJson!string);
@@ -61,6 +57,10 @@ in (value.type == JSONType.array)
     if (type == "string")
     {
         return value.toObject.decodeJson!(StringType, .decode);
+    }
+    if (value.hasKey("enum"))
+    {
+        return new EnumType(value.getEntry("enum").decodeJson!(string[]));
     }
     if (type == "array")
     {

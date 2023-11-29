@@ -439,7 +439,7 @@ class Render
             }
 
             if (i > 0) lines ~= "";
-            lines ~= route.summary.strip.split("\n").strip!(a => a.empty).renderComment(4);
+            lines ~= route.description.strip.split("\n").strip!(a => a.empty).renderComment(4);
             lines ~= linebreak((4).spaces, (12).spaces, [
                 format!"@(Method.%s!("(route.method.capitalizeFirst),
                 "JsonFormat, ",

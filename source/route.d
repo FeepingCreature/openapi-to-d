@@ -12,7 +12,7 @@ struct Route
 
     string method;
 
-    string summary;
+    string description;
 
     string operationId;
 
@@ -34,6 +34,7 @@ class ValueParameter : Parameter
 {
     string in_;
 
+    @(This.Default!null)
     string description;
 
     string name;

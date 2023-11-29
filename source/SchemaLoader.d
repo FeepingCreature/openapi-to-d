@@ -62,7 +62,7 @@ class SchemaLoader
                         {
                             url = url_;
                             method = method_;
-                            summary = routeDto.summary;
+                            description = routeDto.description.get(routeDto.summary.get(null));
                             operationId = routeDto.operationId;
                             schema = schema_;
                             parameters = routeParameters_ ~ routeDto.parameters;
@@ -121,7 +121,11 @@ class OpenApiFile
 
 struct RouteDto
 {
-    string summary;
+    @(This.Default)
+    Nullable!string description;
+
+    @(This.Default)
+    Nullable!string summary;
 
     string operationId;
 

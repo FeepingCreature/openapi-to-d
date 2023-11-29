@@ -86,6 +86,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                 render.renderEnum(name, stringType.enum_, type.source, type.description);
                 rendered = true;
             }
+            else if (name.endsWith("Id"))
+            {
+                render.renderIdType(name, type.source, type.description);
+                rendered = true;
+            }
         }
         else if (auto allOf = cast(AllOf) type)
         {

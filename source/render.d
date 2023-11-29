@@ -230,6 +230,21 @@ class Render
         types ~= result;
     }
 
+    void renderIdType(string name, string source, string description)
+    {
+        string result;
+
+        if (!description.empty)
+        {
+            result ~= description.renderComment(0, source);
+        }
+        result ~= format!"struct %s\n{\n"(name);
+        result ~= "    import messaging.IdType : IdType;\n\n";
+        result ~= format!"    mixin IdType!%s;\n"(name);
+        result ~= "}\n";
+        types ~= result;
+    }
+
     string renderMember(string name, Type type, bool optional, bool allowNull, ref string extraTypes,
         string modifier = "")
     {

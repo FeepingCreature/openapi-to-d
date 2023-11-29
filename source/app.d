@@ -66,9 +66,17 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 
         bool rendered = false;
 
-        if (cast(ObjectType) type)
+        if (auto objectType = cast(ObjectType) type)
         {
-            render.types ~= render.renderObject(key, type, schemaConfig.invariant_, type.description);
+            // Looks like an event. Just render 'data'.
+            if (auto dataObj = objectType.findKey("data"))
+            {
+                render.types ~= render.renderObject(key, dataObj, schemaConfig.invariant_, type.description);
+            }
+            else
+            {
+                render.types ~= render.renderObject(key, type, schemaConfig.invariant_, type.description);
+            }
             rendered = true;
         }
         else if (auto stringType = cast(StringType) type)

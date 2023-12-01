@@ -348,6 +348,30 @@ class Render
         }
         if (auto reference = cast(Reference) type)
         {
+            string tryInline()
+            {
+                if (!reference.target.startsWith("#/")) return null;
+
+                const target = reference.target["#/".length .. $];
+
+                if (target !in this.schemas) return null;
+
+                auto schema = this.schemas[target].pickBestType;
+                auto stringType = cast(StringType) schema;
+
+                if (stringType is null) return null;
+                if (!stringType.enum_.empty || target.keyToTypeName.endsWith("Id")) return null;
+
+                writefln!"use inline for %s"(target);
+                // inline alias
+                return renderMember(name, schema, optional, allowNull, extraTypes, modifier);
+            }
+
+            if (auto result = tryInline)
+            {
+                return result;
+            }
+
             const result = resolveReference(reference);
 
             if (!result.import_.isNull)

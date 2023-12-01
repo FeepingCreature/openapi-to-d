@@ -55,12 +55,17 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     foreach (key; keysInOrder)
     {
         auto types = schemas[key];
-        const type = pickBestType(types);
+        auto type = pickBestType(types);
         const name = key.keyToTypeName;
         auto schemaConfig = config.schemas.get(name, SchemaConfig());
 
         if (!schemaConfig.include)
             continue;
+
+        while (auto arrayType = cast(ArrayType) type)
+        {
+            type = arrayType.items;
+        }
 
         auto render = new Render(config.componentFolder.pathToModule, allKeysSet, schemas);
 
@@ -90,6 +95,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             {
                 render.renderIdType(name, type.source, type.description);
                 rendered = true;
+            }
+            else
+            {
+                // will be inlined
+                continue;
             }
         }
         else if (auto allOf = cast(AllOf) type)

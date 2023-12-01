@@ -262,6 +262,10 @@ class Render
             }
             return format!"    bool%s %s;\n"(modifier, name);
         }
+        if (auto numberType = cast(NumberType) type)
+        {
+            return format!"    double%s %s;\n"(modifier, name);
+        }
         if (auto stringType = cast(StringType) type)
         {
             string udaPrefix = "";

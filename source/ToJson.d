@@ -13,7 +13,7 @@ JSONValue toJson(const Node node, Flag!"ordered" ordered)
         case merge: assert(false);
         case boolean: return JSONValue(node.get!bool);
         case integer: return JSONValue(node.get!int);
-        case decimal: return JSONValue(node.get!int);
+        case decimal: return JSONValue(node.get!double);
         case binary: return JSONValue(node.get!int);
         case timestamp: return JSONValue(node.get!(.string));
         case string: return JSONValue(node.get!(.string));

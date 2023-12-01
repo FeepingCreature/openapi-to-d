@@ -362,7 +362,6 @@ class Render
                 if (stringType is null) return null;
                 if (!stringType.enum_.empty || target.keyToTypeName.endsWith("Id")) return null;
 
-                writefln!"use inline for %s"(target);
                 // inline alias
                 return renderMember(name, schema, optional, allowNull, extraTypes, modifier);
             }

@@ -34,13 +34,13 @@ class Render
     // for resolving references when inlining
     Type[][string] schemas;
 
-    string renderObject(string key, const Type value, const string[] invariants, string description)
+    string renderObject(string key, const Type value, const SchemaConfig config, string description)
     {
         const name = key.keyToTypeName;
 
         if (auto objectType = cast(ObjectType) value)
         {
-            return renderStruct(name, objectType, invariants, description);
+            return renderStruct(name, objectType, config, description);
         }
         if (auto allOf = cast(AllOf) value)
         {
@@ -146,16 +146,17 @@ class Render
                     substitute.required ~= fieldName;
                     extra = format!"alias %s this;"(fieldName);
                 }
-                return renderStruct(name, substitute, invariants, description, extra);
+                return renderStruct(name, substitute, config, description, extra);
             }
         }
         stderr.writefln!"ERR: not renderable %s; %s"(key, value.classinfo.name);
         assert(false);
     }
 
-    string renderStruct(string name, ObjectType objectType, const(string)[] invariants, string description,
+    string renderStruct(string name, ObjectType objectType, const SchemaConfig config, string description,
         string extra = null)
     {
+        const(string)[] invariants = config.invariant_;
         string result;
 
         if (!description.empty)
@@ -166,11 +167,16 @@ class Render
         string extraTypes, members;
         foreach (tableEntry; objectType.properties)
         {
+            const fieldName = tableEntry.key.fixReservedIdentifiers;
+
+            if (!config.properties.empty && !config.properties.canFind(fieldName))
+                continue;
+
             const required = objectType.required.canFind(tableEntry.key);
             const optional = !required;
             const allowNull = true;
 
-            members ~= renderMember(tableEntry.key.fixReservedIdentifiers, tableEntry.value,
+            members ~= renderMember(fieldName, tableEntry.value,
                 optional, allowNull, extraTypes);
             members ~= "\n";
         }
@@ -390,7 +396,7 @@ class Render
         const capitalizedName = name.capitalizeFirst;
         const typeName = modifier.isArrayModifier ? capitalizedName.singularize : capitalizedName;
 
-        extraTypes ~= renderObject(typeName, type, null, null).indent ~ "\n";
+        extraTypes ~= renderObject(typeName, type, SchemaConfig(), null).indent ~ "\n";
         if (optional)
         {
             return format!"    @(This.Default)\n    %s %s;\n"(nullableType(typeName, modifier, allowNull), name);
@@ -475,7 +481,7 @@ class Render
                 else
                 {
                     bodyType = route.operationId.capitalizeFirst;
-                    extraTypes ~= "\n" ~ renderObject(bodyType, route.schema, null, null);
+                    extraTypes ~= "\n" ~ renderObject(bodyType, route.schema, SchemaConfig(), null);
                 }
                 dParameters ~= "const " ~ bodyType;
             }

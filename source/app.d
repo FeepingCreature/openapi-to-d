@@ -76,11 +76,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             // Looks like an event. Just render 'data'.
             if (auto dataObj = objectType.findKey("data"))
             {
-                render.types ~= render.renderObject(key, dataObj, schemaConfig.invariant_, type.description);
+                render.types ~= render.renderObject(key, dataObj, schemaConfig, type.description);
             }
             else
             {
-                render.types ~= render.renderObject(key, type, schemaConfig.invariant_, type.description);
+                render.types ~= render.renderObject(key, type, schemaConfig, type.description);
             }
             rendered = true;
         }
@@ -111,7 +111,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                     // Looks like an event. Just render 'data'.
                     if (auto dataObj = objectType.findKey("data"))
                     {
-                        render.types ~= render.renderObject(key, dataObj, schemaConfig.invariant_, type.description);
+                        render.types ~= render.renderObject(key, dataObj, schemaConfig, type.description);
                         rendered = true;
                         break;
                     }
@@ -125,7 +125,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                 if (allOf.children.length == references.length + objects.length)
                 {
                     // Any mix of refs and objects: refs are just inlined into the object.
-                    render.types ~= render.renderObject(key, type, schemaConfig.invariant_, type.description);
+                    render.types ~= render.renderObject(key, type, schemaConfig, type.description);
                     rendered = true;
                 }
             }

@@ -52,6 +52,9 @@ struct SchemaConfig
     bool include = true;
 
     @(This.Default)
+    const(string)[] properties;
+
+    @(This.Default)
     const(string)[] invariant_;
 
     mixin(GenerateAll);

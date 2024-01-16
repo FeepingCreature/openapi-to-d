@@ -8,6 +8,7 @@ import std.array;
 import std.format;
 import std.json;
 import std.path;
+import std.string;
 import std.typecons;
 import text.json.Decode;
 import ToJson;
@@ -62,7 +63,7 @@ class SchemaLoader
                         {
                             url = url_;
                             method = method_;
-                            description = routeDto.description.get(routeDto.summary.get(null));
+                            description = mergeComments(routeDto.summary, routeDto.description);
                             operationId = routeDto.operationId;
                             schema = schema_;
                             parameters = routeParameters_ ~ routeDto.parameters;
@@ -133,4 +134,19 @@ struct RouteDto
     Parameter[] parameters;
 
     mixin(GenerateAll);
+}
+
+private string mergeComments(const Nullable!string first, const Nullable!string second)
+{
+    const string firstString = first.get(null).strip;
+    const string secondString = second.get(null).strip;
+    if (secondString.empty)
+    {
+        return firstString;
+    }
+    if (firstString.empty)
+    {
+        return secondString;
+    }
+    return format!"%s\n\n%s"(firstString, secondString);
 }

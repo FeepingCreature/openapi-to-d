@@ -617,8 +617,26 @@ private const(ValueParameter) resolveParameter(const Parameter param, const Para
     assert(false, format!"Unknown parameter type %s"(param.classinfo.name));
 }
 
-private Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
+alias Resolution = Tuple!(string, "typeName", Nullable!string, "import_");
+
+__gshared Resolution[string] referenceCache;
+__gshared Object referenceCacheLock;
+
+shared static this()
 {
+    referenceCacheLock = new Object;
+}
+
+private Resolution resolveReference(const Reference reference)
+{
+    synchronized (referenceCacheLock)
+    {
+        if (auto ptr = reference.toString in referenceCache)
+        {
+            return *ptr;
+        }
+    }
+
     const typeName = reference.target.keyToTypeName;
     const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
         .chain(dirEntries("include", "*.d", SpanMode.depth))
@@ -640,11 +658,13 @@ private Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(
             reference.target, matchingImports, matchingImports.front);
     }
 
-    if (!matchingImports.empty)
+    const resolution = Resolution(typeName, matchingImports.empty ? Nullable!string() : matchingImports.front.nullable);
+
+    synchronized (referenceCacheLock)
     {
-        return typeof(return)(typeName, matchingImports.front.nullable);
+        referenceCache[reference.toString] = resolution;
     }
-    return typeof(return)(typeName, Nullable!string());
+    return resolution;
 }
 
 private string renderComment(string comment, int indent, string source)

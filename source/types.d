@@ -74,6 +74,10 @@ in (value.type == JSONType.array)
     {
         return value.toObject.decodeJson!(NumberType, .decode);
     }
+    if (type == "integer")
+    {
+        return value.toObject.decodeJson!(IntegerType, .decode);
+    }
     assert(false, format!"I don't know what this is: %s"(value));
 }
 
@@ -230,6 +234,19 @@ class BooleanType : Type
 
 class NumberType : Type
 {
+    override Type transform(Type delegate(Type) dg)
+    {
+        return this;
+    }
+
+    mixin(GenerateAll);
+}
+
+class IntegerType : Type
+{
+    @(This.Default)
+    Nullable!string format_;
+
     override Type transform(Type delegate(Type) dg)
     {
         return this;

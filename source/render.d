@@ -268,9 +268,23 @@ class Render
             }
             return format!"    bool%s %s;\n"(modifier, name);
         }
+        string renderDType(string dType)
+        {
+            if (optional)
+            {
+                const nullableDType = nullableType(dType, modifier, allowNull);
+
+                return format!"    @(This.Default)\n    %s %s;\n"(nullableDType, name);
+            }
+            return format!"    %s%s %s;\n"(dType, modifier, name);
+        }
         if (auto numberType = cast(NumberType) type)
         {
-            return format!"    double%s %s;\n"(modifier, name);
+            return renderDType("double");
+        }
+        if (auto integerType = cast(IntegerType) type)
+        {
+            return renderDType(integerType.format_ == "int32" ? "int" : "long");
         }
         if (auto stringType = cast(StringType) type)
         {

@@ -547,6 +547,7 @@ class Render
         {
             case "404": return from("util.NoSuchElementException", "NoSuchElementException");
             case "409": return from("util.IllegalArgumentException", "IllegalArgumentException");
+            case "422": return from("util.IllegalArgumentException", "IllegalArgumentException");
             default: return from("std.exception", "Exception");
         }
     }

@@ -300,6 +300,11 @@ class Render
                 actualType = "SysTime";
                 imports ~= "std.datetime";
             }
+            else if (stringType.format_ == "duration")
+            {
+                actualType = "Duration";
+                imports ~= "std.datetime";
+            }
             else if (!stringType.enum_.empty)
             {
                 actualType = name.capitalize;

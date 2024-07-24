@@ -483,11 +483,10 @@ class Render
                 }
             }
 
-            string bodyType = "void";
-
-            if (route.schema)
+            string typeToString(Type type)
             {
-                if (auto refType = cast(Reference) route.schema)
+                if (type is null) return "void";
+                if (auto refType = cast(Reference) type)
                 {
                     const result = resolveReference(refType);
 
@@ -495,13 +494,21 @@ class Render
                     {
                         imports ~= result.import_.get;
                     }
-                    bodyType = result.typeName;
+                    return result.typeName;
                 }
                 else
                 {
-                    bodyType = route.operationId.capitalizeFirst;
-                    extraTypes ~= "\n" ~ renderObject(bodyType, route.schema, SchemaConfig(), null);
+                    const bodyType = route.operationId.capitalizeFirst;
+
+                    extraTypes ~= "\n" ~ renderObject(bodyType, type, SchemaConfig(), null);
+                    return bodyType;
                 }
+            }
+
+            const string bodyType = typeToString(cast() route.schema);
+
+            if (bodyType != "void")
+            {
                 dParameters ~= "const " ~ bodyType;
             }
 
@@ -513,19 +520,28 @@ class Render
                 format!"%s, "(route.schema ? bodyType : "void"),
                 format!"\"%s\"))"(route.url),
             ]);
-            foreach (responseCode; route.responseCodes)
+            Type responseType = null;
+            foreach (response; route.responses)
             {
-                if (responseCode.startsWith("2")) continue;
+                if (response.code.startsWith("2")) {
+                    assert(responseType is null);
+                    responseType = cast() response.schema;
+                    continue;
+                }
                 // produced by the networking lib
-                if (responseCode == "422") continue;
+                if (response.code == "422") continue;
 
-                const member = codeToMember(responseCode);
-                const exception = pickException(responseCode);
+                enforce(response.schema is null, "Error response cannot return body");
+
+                const member = codeToMember(response.code);
+                const exception = pickException(response.code);
 
                 lines ~= format!"    @(Throws!(%s, ResponseCode.%s.expand))"(exception, member);
             }
+            const string returnType = typeToString(responseType);
+
             lines ~= linebreak((4).spaces, (8).spaces, [
-                format!"public void %s("(route.operationId),
+                format!"public %s %s("(returnType, route.operationId),
             ] ~ dParameters.map!(a => a ~ ", ").array ~ [
                 "const Context context);"
             ]);

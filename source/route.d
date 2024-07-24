@@ -20,7 +20,7 @@ struct Route
 
     Parameter[] parameters;
 
-    string[] responseCodes;
+    Response[] responses;
 
     mixin(GenerateAll);
 }
@@ -50,6 +50,16 @@ class ValueParameter : Parameter
 class RefParameter : Parameter
 {
     string target;
+
+    mixin(GenerateAll);
+}
+
+struct Response
+{
+    string code;
+
+    @(This.Default!null)
+    Type schema;
 
     mixin(GenerateAll);
 }

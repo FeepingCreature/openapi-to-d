@@ -46,6 +46,20 @@ class SchemaLoader
 
                         auto routeDto = endpoint.toObject.decodeJson!(RouteDto, route.decode);
 
+                        Response[] responses_;
+                        foreach (string code, JSONValue response; endpoint.getEntry("responses").toObject.object)
+                        {
+                            Type schema = null;
+                            if (response.hasKey("content"))
+                            {
+                                schema = response.getEntry("content")
+                                    .getEntry("application/json")
+                                    .getEntry("schema")
+                                    .decodeJson!(Type, types.decode);
+                            }
+                            responses_ ~= Response(code, schema);
+                        }
+
                         Type schema_ = null;
                         if (endpoint.hasKey("requestBody"))
                         {
@@ -55,9 +69,6 @@ class SchemaLoader
                                 .getEntry("schema")
                                 .decodeJson!(Type, types.decode);
                         }
-                        string[] responseCodes_ = endpoint.getEntry("responses").array
-                            .map!(pair => pair["key"].str)
-                            .array;
 
                         with (Route.Builder())
                         {
@@ -67,7 +78,7 @@ class SchemaLoader
                             operationId = routeDto.operationId;
                             schema = schema_;
                             parameters = routeParameters_ ~ routeDto.parameters;
-                            responseCodes = responseCodes_;
+                            responses = responses_;
                             routes ~= builderValue;
                         }
                     }

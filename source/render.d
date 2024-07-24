@@ -565,6 +565,7 @@ class Render
             case "409": return from("util.IllegalArgumentException", "IllegalArgumentException");
             case "422": return from("util.IllegalArgumentException", "IllegalArgumentException");
             case "503": return from("util.ServiceUnavailableException", "ServiceUnavailableException");
+            case "512": return from("util.ConcurrentModificationException", "ConcurrentModificationException");
             default: return from("std.exception", "Exception");
         }
     }

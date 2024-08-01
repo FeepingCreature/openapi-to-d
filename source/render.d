@@ -44,10 +44,53 @@ class Render
         }
         if (auto allOf = cast(AllOf) value)
         {
-            auto refChildren = allOf.children.map!(a => cast(Reference) a).filter!"a".array;
-            auto objChildren = allOf.children.map!(a => cast(ObjectType) a).filter!"a".array;
+            Type loadSchema(string target)
+            {
+                const string relPath = target.until("#/").array.toUTF8;
+                const string schemaName = target.find("#/").drop("#/".length);
+                if (relPath.empty)
+                {
+                    // try to find schema in own set.
+                    assert(schemaName in this.schemas, format!"%s missing in %s"(
+                        schemaName, this.schemas.keys));
+                    return this.schemas[schemaName].pickBestType;
+                }
+                // We don't usually look at reference targets, so
+                // we manually invoke the loader just this once.
+                const string path = value.source.dirName.buildNormalizedPath(relPath);
+                auto loader = new SchemaLoader;
+                auto file = loader.load(path);
+                assert(schemaName in file.schemas, format!"%s missing in %s"(
+                    schemaName, file.schemas.keys));
+                return file.schemas[schemaName];
+            }
+            Type[] flattenAllOf(AllOf allOf)
+            {
+                Type[] result = null;
+                foreach (child; allOf.children)
+                {
+                    if (auto nextAllOf = cast(AllOf) child)
+                    {
+                        result ~= flattenAllOf(nextAllOf);
+                        continue;
+                    }
+                    if (auto refChild = cast(Reference) child)
+                    {
+                        auto schema = loadSchema(refChild.target);
+                        if (auto nextAllOf = cast(AllOf) schema) {
+                            result ~= flattenAllOf(nextAllOf);
+                            continue;
+                        }
+                    }
+                    result ~= child;
+                }
+                return result;
+            }
+            auto children = flattenAllOf(allOf);
+            auto refChildren = children.map!(a => cast(Reference) a).filter!"a".array;
+            auto objChildren = children.map!(a => cast(ObjectType) a).filter!"a".array;
 
-            if (allOf.children.length == refChildren.length + objChildren.length)
+            if (children.length == refChildren.length + objChildren.length)
             {
                 // generate object with all refs but one inlined
                 auto substitute = new ObjectType(null, null);
@@ -61,32 +104,12 @@ class Render
                 Reference refWithMostProperties = null;
                 // Resolve all references in the course of looking for the fattest child
                 Type[string] resolvedReferences;
-                foreach (child; allOf.children)
+                foreach (child; children)
                 {
                     auto refChild = cast(Reference) child;
                     if (!refChild)
                         continue;
-                    Type loadSchema()
-                    {
-                        const string relPath = refChild.target.until("#/").array.toUTF8;
-                        const string schemaName = refChild.target.find("#/").drop("#/".length);
-                        if (relPath.empty)
-                        {
-                            // try to find schema in own set.
-                            assert(schemaName in this.schemas, format!"%s missing in %s"(
-                                schemaName, this.schemas.keys));
-                            return this.schemas[schemaName].pickBestType;
-                        }
-                        // We don't usually look at reference targets, so
-                        // we manually invoke the loader just this once.
-                        const string path = value.source.dirName.buildNormalizedPath(relPath);
-                        auto loader = new SchemaLoader;
-                        auto file = loader.load(path);
-                        assert(schemaName in file.schemas, format!"%s missing in %s"(
-                            schemaName, file.schemas.keys));
-                        return file.schemas[schemaName];
-                    }
-                    auto schema = loadSchema;
+                    auto schema = loadSchema(refChild.target);
                     resolvedReferences[refChild.target] = schema;
                     if (auto obj = cast(ObjectType) schema)
                     {
@@ -104,7 +127,7 @@ class Render
                     }
                 }
 
-                foreach (child; allOf.children)
+                foreach (child; children)
                 {
                     if (auto obj = cast(ObjectType) child)
                     {

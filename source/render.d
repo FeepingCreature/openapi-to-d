@@ -519,6 +519,10 @@ class Render
                     }
                     return result.typeName;
                 }
+                else if (auto arrayType = cast(ArrayType) type)
+                {
+                    return typeToString(arrayType.items) ~ "[]";
+                }
                 else
                 {
                     const bodyType = route.operationId.capitalizeFirst;

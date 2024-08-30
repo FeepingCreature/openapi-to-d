@@ -482,10 +482,8 @@ class Render
                 .array;
             string[] dParameters = null;
 
-            foreach (urlParameter; urlParameters)
+            void addDParameter(const Type type, const string name)
             {
-                const type = urlParameter.schema;
-
                 if (auto refType = cast(Reference) type)
                 {
                     const result = resolveReference(refType);
@@ -494,16 +492,21 @@ class Render
                     {
                         imports ~= result.import_.get;
                     }
-                    dParameters ~= format!"const %s %s"(result.typeName, urlParameter.name);
+                    dParameters ~= format!"const %s %s"(result.typeName, name);
                 }
                 else if (auto strType = cast(StringType) type)
                 {
-                    dParameters ~= format!"const string %s"(urlParameter.name);
+                    dParameters ~= format!"const string %s"(name);
                 }
                 else
                 {
                     assert(false, format!"Type currently unsupported for URL parameters: %s"(type));
                 }
+            }
+
+            foreach (urlParameter; urlParameters)
+            {
+                addDParameter(urlParameter.schema, urlParameter.name);
             }
 
             string typeToString(Type type)
@@ -539,13 +542,31 @@ class Render
                 dParameters ~= "const " ~ bodyType;
             }
 
+            const queryParameters = route.parameters
+                .map!(a => cast(ValueParameter) a)
+                .filter!"a !is null"
+                .filter!(a => a.in_ == "query")
+                .array;
+
+            foreach (queryParameter; queryParameters)
+            {
+                addDParameter(queryParameter.schema, queryParameter.name);
+            }
+
+            string urlWithQueryParams = route.url;
+
+            if (!queryParameters.empty)
+            {
+                urlWithQueryParams ~= "?" ~ queryParameters.map!(a => format!"%s={%s}"(a.name, a.name)).join("&");
+            }
+
             if (i > 0) lines ~= "";
             lines ~= route.description.strip.split("\n").strip!(a => a.empty).renderComment(4);
             lines ~= linebreak((4).spaces, (12).spaces, [
                 format!"@(Method.%s!("(route.method.capitalizeFirst),
                 "JsonFormat, ",
                 format!"%s, "(route.schema ? bodyType : "void"),
-                format!"\"%s\"))"(route.url),
+                format!"\"%s\"))"(urlWithQueryParams),
             ]);
             Type responseType = null;
             foreach (response; route.responses)

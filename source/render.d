@@ -482,21 +482,26 @@ class Render
                 .array;
             string[] dParameters = null;
 
-            void addDParameter(const Type type, const string name)
+            void addDParameter(const Type type, const string name, bool required = true)
             {
+                if (!required)
+                {
+                    imports ~= "std.typecons";
+                }
                 if (auto refType = cast(Reference) type)
                 {
                     const result = resolveReference(refType);
+                    const typeName = required ? result.typeName : format!"Nullable!%s"(result.typeName);
 
                     if (!result.import_.isNull)
                     {
                         imports ~= result.import_.get;
                     }
-                    dParameters ~= format!"const %s %s"(result.typeName, name);
+                    dParameters ~= format!"const %s %s"(typeName, name);
                 }
                 else if (auto strType = cast(StringType) type)
                 {
-                    dParameters ~= format!"const string %s"(name);
+                    dParameters ~= format!"const %s %s"(required ? "string" : "Nullable!string", name);
                 }
                 else
                 {
@@ -550,7 +555,7 @@ class Render
 
             foreach (queryParameter; queryParameters)
             {
-                addDParameter(queryParameter.schema, queryParameter.name);
+                addDParameter(queryParameter.schema, queryParameter.name, queryParameter.required);
             }
 
             string urlWithQueryParams = route.url;

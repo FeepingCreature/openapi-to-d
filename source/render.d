@@ -316,22 +316,14 @@ class Render
             {
                 udaPrefix = "    @NonEmpty\n";
             }
-            string actualType = "string";
 
-            if (stringType.format_ == "date-time")
+            auto result = resolveSimpleStringType(stringType);
+
+            string actualType = "string";
+            if (!result.isNull)
             {
-                actualType = "SysTime";
-                imports ~= "std.datetime";
-            }
-            else if (stringType.format_ == "date")
-            {
-                actualType = "Date";
-                imports ~= "std.datetime";
-            }
-            else if (stringType.format_ == "duration")
-            {
-                actualType = "Duration";
-                imports ~= "std.datetime";
+                actualType = result.get.typeName;
+                imports ~= result.get.imports;
             }
             else if (!stringType.enum_.empty)
             {
@@ -500,13 +492,20 @@ class Render
 
                     if (!result.import_.isNull)
                     {
-                        imports ~= result.import_.get;
+                        imports ~= result.import_.get(null);
                     }
                     dParameters ~= format!"const %s %s"(typeName, name);
                 }
                 else if (auto strType = cast(StringType) type)
                 {
-                    dParameters ~= format!"const %s %s"(required ? "string" : "Nullable!string", name);
+                    auto stringType = "string";
+                    const result = resolveSimpleStringType(strType);
+                    if (!result.isNull)
+                    {
+                        stringType = result.get.typeName;
+                        imports ~= result.get.imports;
+                    }
+                    dParameters ~= format!"const %s%s %s"(required ? "" : "Nullable!", stringType, name);
                 }
                 else
                 {
@@ -654,6 +653,27 @@ class Render
     }
 
     mixin(GenerateThis);
+}
+
+Nullable!(Tuple!(string, "typeName", string[], "imports")) resolveSimpleStringType(const StringType type)
+{
+    if (!type.enum_.empty)
+    {
+        return typeof(return)();
+    }
+    if (type.format_ == "date-time")
+    {
+        return tuple!("typeName", "imports")("SysTime", ["std.datetime"]).nullable;
+    }
+    if (type.format_ == "date")
+    {
+        return tuple!("typeName", "imports")("Date", ["std.datetime"]).nullable;
+    }
+    if (type.format_ == "duration")
+    {
+        return tuple!("typeName", "imports")("Duration", ["std.datetime"]).nullable;
+    }
+    return typeof(return)();
 }
 
 // If we have both a type definition for X and a link to X in another yml,

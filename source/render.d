@@ -323,6 +323,11 @@ class Render
                 actualType = "SysTime";
                 imports ~= "std.datetime";
             }
+            else if (stringType.format_ == "date")
+            {
+                actualType = "Date";
+                imports ~= "std.datetime";
+            }
             else if (stringType.format_ == "duration")
             {
                 actualType = "Duration";

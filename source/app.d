@@ -47,7 +47,10 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         }
     }
 
+    // ignore schema types that are pure references; they're just a hack
+    // to work around https://github.com/APIDevTools/swagger-cli/issues/59
     auto allKeysSet = keysInOrder
+        .filter!(key => !cast(Reference) schemas[key].pickBestType)
         .map!(key => tuple!("key", "value")(key.keyToTypeName, true))
         .assocArray;
 

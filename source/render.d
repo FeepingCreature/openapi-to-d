@@ -104,12 +104,27 @@ class Render
                 Reference refWithMostProperties = null;
                 // Resolve all references in the course of looking for the fattest child
                 Type[string] resolvedReferences;
-                foreach (child; children)
+
+                foreach (ref child; children)
                 {
                     auto refChild = cast(Reference) child;
                     if (!refChild)
                         continue;
                     auto schema = loadSchema(refChild.target);
+                    if (refChild.target.startsWith("#/"))
+                    {
+                        if (auto nextRef = cast(Reference) schema)
+                        {
+                            /**
+                             * Reference in the same file that points at another reference?
+                             * This must be the workaround for https://github.com/APIDevTools/swagger-cli/issues/59
+                             * Bypass the first reference entirely.
+                             */
+                            child = nextRef;
+                            refChild = nextRef;
+                            schema = loadSchema(nextRef.target);
+                        }
+                    }
                     resolvedReferences[refChild.target] = schema;
                     if (auto obj = cast(ObjectType) schema)
                     {

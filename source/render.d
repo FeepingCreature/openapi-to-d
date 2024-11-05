@@ -268,7 +268,7 @@ class Render
         result ~= format!"enum %s\n{\n"(name);
         foreach (member; members)
         {
-            result ~= "    " ~ member.screamingSnakeToCamelCase ~ ",\n";
+            result ~= "    " ~ member.screamingSnakeToCamelCase.fixReservedIdentifiers ~ ",\n";
         }
         result ~= "}\n";
         types ~= result;
@@ -346,7 +346,7 @@ class Render
                 extraTypes ~= format!"    enum %s\n    {\n"(actualType);
                 foreach (member; stringType.enum_)
                 {
-                    extraTypes ~= "        " ~ member.screamingSnakeToCamelCase ~ ",\n";
+                    extraTypes ~= "        " ~ member.screamingSnakeToCamelCase.fixReservedIdentifiers ~ ",\n";
                 }
                 extraTypes ~= "    }\n\n";
             }

@@ -57,6 +57,9 @@ struct SchemaConfig
     @(This.Default)
     const(string)[] invariant_;
 
+    @(This.Default!true)
+    bool isEventType = true;
+
     mixin(GenerateAll);
 }
 

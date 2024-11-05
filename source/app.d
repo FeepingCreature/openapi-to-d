@@ -76,10 +76,10 @@ mixin CLI!Arguments.main!((const Arguments arguments)
 
         if (auto objectType = cast(ObjectType) type)
         {
-            // Looks like an event. Just render 'data'.
-            if (auto dataObj = objectType.findKey("data"))
+            // Check if this is an event type with a 'data' field
+            if (schemaConfig.isEventType && objectType.findKey("data"))
             {
-                render.types ~= render.renderObject(key, dataObj, schemaConfig, type.description);
+                render.types ~= render.renderObject(key, objectType.findKey("data"), schemaConfig, type.description);
             }
             else
             {
@@ -111,10 +111,10 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             {
                 if (auto objectType = cast(ObjectType) child)
                 {
-                    // Looks like an event. Just render 'data'.
-                    if (auto dataObj = objectType.findKey("data"))
+                    // Check if this is an event type with a 'data' field
+                    if (schemaConfig.isEventType && objectType.findKey("data"))
                     {
-                        render.types ~= render.renderObject(key, dataObj, schemaConfig, type.description);
+                        render.types ~= render.renderObject(key, objectType.findKey("data"), schemaConfig, type.description);
                         rendered = true;
                         break;
                     }

@@ -574,7 +574,7 @@ class Render
 
             foreach (queryParameter; queryParameters)
             {
-                addDParameter(queryParameter.schema, queryParameter.name, queryParameter.required);
+                addDParameter(queryParameter.schema, queryParameter.name, queryParameter.required.get(false));
             }
 
             string urlWithQueryParams = route.url;

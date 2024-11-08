@@ -2,6 +2,7 @@ module route;
 
 import boilerplate;
 import std.json;
+import std.typecons;
 import text.json.Decode;
 import ToJson;
 import types;
@@ -41,8 +42,8 @@ class ValueParameter : Parameter
 
     Type schema;
 
-    @(This.Default!true)
-    bool required;
+    @(This.Default)
+    Nullable!bool required;
 
     mixin(GenerateAll);
 }

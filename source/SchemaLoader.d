@@ -74,6 +74,11 @@ class SchemaLoader
                                 .getEntry("schema")
                                 .decodeJson!(Type, types.decode);
                         }
+                        else if (endpoint.hasKey("requestBody", "content"))
+                        {
+                            // unknown content
+                            schema_ = new ArrayType(new IntegerType("int8".nullable));
+                        }
 
                         with (Route.Builder())
                         {

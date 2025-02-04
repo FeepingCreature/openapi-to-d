@@ -4,6 +4,7 @@ import dyaml;
 import std.algorithm;
 import std.format;
 import std.json;
+import std.range : empty;
 import std.typecons;
 
 JSONValue toJson(const Node node, Flag!"ordered" ordered)
@@ -49,10 +50,19 @@ JSONValue toJson(const Node node, Flag!"ordered" ordered)
     }
 }
 
-bool hasKey(JSONValue table, string key)
+bool hasKey(JSONValue table, string[] keys...)
 in (table.isTable)
+in (!keys.empty)
 {
-    return table.array.any!(a => a["key"] == JSONValue(key));
+    if (!table.array.any!(a => a["key"] == JSONValue(keys[0])))
+    {
+        return false;
+    }
+    if (keys.length == 1)
+    {
+        return true;
+    }
+    return table.getEntry(keys[0]).hasKey(keys[1 .. $]);
 }
 
 JSONValue getEntry(JSONValue table, string key)

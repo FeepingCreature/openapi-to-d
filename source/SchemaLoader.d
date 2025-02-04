@@ -50,7 +50,7 @@ class SchemaLoader
                         foreach (string code, JSONValue response; endpoint.getEntry("responses").toObject.object)
                         {
                             Type schema = null;
-                            if (response.hasKey("content"))
+                            if (response.hasKey("content", "application/json"))
                             {
                                 schema = response.getEntry("content")
                                     .getEntry("application/json")
@@ -61,7 +61,7 @@ class SchemaLoader
                         }
 
                         Type schema_ = null;
-                        if (endpoint.hasKey("requestBody"))
+                        if (endpoint.hasKey("requestBody", "content", "application/json"))
                         {
                             schema_ = endpoint.getEntry("requestBody")
                                 .getEntry("content")

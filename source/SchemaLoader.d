@@ -57,6 +57,11 @@ class SchemaLoader
                                     .getEntry("schema")
                                     .decodeJson!(Type, types.decode);
                             }
+                            else if (response.hasKey("content"))
+                            {
+                                // unknown content
+                                schema = new ArrayType(new IntegerType("int8".nullable));
+                            }
                             responses_ ~= Response(code, schema);
                         }
 

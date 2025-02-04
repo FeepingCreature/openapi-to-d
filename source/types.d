@@ -252,6 +252,18 @@ class IntegerType : Type
         return this;
     }
 
+    public string toDType()
+    {
+        switch (this.format_.get(""))
+        {
+            case "int8": return "const(ubyte)";
+            case "int16": return "short";
+            case "int32": return "int";
+            case "int64": return "long";
+            default: return "long";
+        }
+    }
+
     mixin(GenerateAll);
 }
 

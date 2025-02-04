@@ -322,7 +322,7 @@ class Render
         }
         if (auto integerType = cast(IntegerType) type)
         {
-            return renderDType(integerType.format_ == "int32" ? "int" : "long");
+            return renderDType(integerType.toDType);
         }
         if (auto stringType = cast(StringType) type)
         {
@@ -546,17 +546,18 @@ class Render
                     }
                     return result.typeName;
                 }
-                else if (auto arrayType = cast(ArrayType) type)
+                if (auto integerType = cast(IntegerType) type)
+                {
+                    return integerType.toDType;
+                }
+                if (auto arrayType = cast(ArrayType) type)
                 {
                     return typeToString(arrayType.items) ~ "[]";
                 }
-                else
-                {
-                    const bodyType = route.operationId.capitalizeFirst;
+                const bodyType = route.operationId.capitalizeFirst;
 
-                    extraTypes ~= "\n" ~ renderObject(bodyType, type, SchemaConfig(), null);
-                    return bodyType;
-                }
+                extraTypes ~= "\n" ~ renderObject(bodyType, type, SchemaConfig(), null);
+                return bodyType;
             }
 
             const string bodyType = typeToString(cast() route.schema);

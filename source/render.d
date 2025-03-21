@@ -410,17 +410,30 @@ class Render
         {
             string tryInline()
             {
-                if (!reference.target.startsWith("#/")) return null;
+                if (!reference.target.canFind("#/")) return null;
 
-                const target = reference.target["#/".length .. $];
+                const target = reference.target.find("#/").drop("#/".length);
 
                 if (target !in this.schemas) return null;
 
                 auto schema = this.schemas[target].pickBestType;
-                auto stringType = cast(StringType) schema;
-
-                if (stringType is null) return null;
-                if (!stringType.enum_.empty || target.keyToTypeName.endsWith("Id")) return null;
+                // TODO factor out into helper (compare app.d toplevel simple-schema resolution)
+                while (auto arrayType = cast(ArrayType) schema)
+                {
+                    schema = arrayType.items;
+                }
+                if (auto stringType = cast(StringType) schema)
+                {
+                    if (!stringType.enum_.empty || target.keyToTypeName.endsWith("Id")) return null;
+                }
+                else if (cast(BooleanType) schema || cast(NumberType) schema || cast(IntegerType) schema)
+                {
+                    // inline alias
+                }
+                else
+                {
+                    return null;
+                }
 
                 // inline alias
                 return renderMember(name, schema, optional, allowNull, extraTypes, modifier);

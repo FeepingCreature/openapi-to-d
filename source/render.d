@@ -563,6 +563,13 @@ class Render
                 {
                     return integerType.toDType;
                 }
+                if (auto stringType = cast(StringType) type)
+                {
+                    if (stringType.enum_.empty && stringType.format_.isNull)
+                    {
+                        return "string";
+                    }
+                }
                 if (auto arrayType = cast(ArrayType) type)
                 {
                     return typeToString(arrayType.items) ~ "[]";

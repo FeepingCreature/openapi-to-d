@@ -105,6 +105,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
                 continue;
             }
         }
+        else if (cast(BooleanType) type || cast(NumberType) type || cast(IntegerType) type)
+        {
+            // will be inlined
+            continue;
+        }
         else if (auto allOf = cast(AllOf) type)
         {
             foreach (child; allOf.children)

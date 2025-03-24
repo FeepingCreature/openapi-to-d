@@ -283,7 +283,7 @@ class Render
             result ~= description.renderComment(0, source);
         }
         result ~= format!"struct %s\n{\n"(name);
-        result ~= "    import messaging.IdType : IdType;\n\n";
+        result ~= "    import util.IdType : IdType;\n\n";
         result ~= format!"    mixin IdType!%s;\n"(name);
         result ~= "}\n";
         types ~= result;

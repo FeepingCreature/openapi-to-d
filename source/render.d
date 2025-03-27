@@ -778,12 +778,18 @@ private const(ValueParameter) resolveParameter(const Parameter param, const Para
 
 alias Resolution = Tuple!(string, "typeName", Nullable!string, "import_");
 
+__gshared const(string)[string] fileCache;
 __gshared const(string)[][string] moduleCache;
-__gshared Object moduleCacheLock;
+__gshared Object cacheLock;
 
 shared static this()
 {
-    moduleCacheLock = new Object;
+    cacheLock = new Object;
+    fileCache = dirEntries("src", "*.d", SpanMode.depth)
+        .chain(dirEntries("include", "*.d", SpanMode.depth))
+        .filter!(file => !file.name.endsWith("Test.d"))
+        .map!(a => tuple!("key", "value")(a.name.idup, a.readText))
+        .assocArray;
 }
 
 private Resolution resolveReference(const Reference reference)
@@ -807,28 +813,23 @@ private Resolution resolveReference(const Reference reference)
 
 private const(string)[] matchingImports(const string typeName)
 {
-    synchronized (moduleCacheLock)
+    synchronized (cacheLock)
     {
         if (auto ptr = typeName in moduleCache)
         {
             return *ptr;
         }
-    }
 
-    const matches = dirEntries("src", "*.d", SpanMode.depth)
-        .chain(dirEntries("include", "*.d", SpanMode.depth))
-        .filter!(file => !file.name.endsWith("Test.d"))
-        .map!(a => a.readText)
-        .filter!(a => a.canFind(format!"struct %s\n"(typeName))
-            || a.canFind(format!"enum %s\n"(typeName)))
-        .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
-        .array;
+        const matches = fileCache
+            .byValue
+            .filter!(a => a.canFind(format!"struct %s\n"(typeName))
+                || a.canFind(format!"enum %s\n"(typeName)))
+            .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
+            .array;
 
-    synchronized (moduleCacheLock)
-    {
         moduleCache[typeName] = matches;
+        return matches;
     }
-    return matches;
 }
 
 private string renderComment(string comment, int indent, string source)

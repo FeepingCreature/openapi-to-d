@@ -412,16 +412,18 @@ class Render
             {
                 if (!reference.target.canFind("#/")) return null;
 
-                const target = reference.target.keyToTypeName;
+                const targetSchema = reference.target.find("#/").drop("#/".length);
 
-                if (target !in this.schemas) return null;
+                if (targetSchema !in this.schemas) return null;
 
-                if (!matchingImports(target).empty)
+                const typeName = reference.target.keyToTypeName;
+
+                if (!matchingImports(typeName).empty)
                 {
                     return null;
                 }
 
-                auto schema = this.schemas[target].pickBestType;
+                auto schema = this.schemas[targetSchema].pickBestType;
                 // TODO factor out into helper (compare app.d toplevel simple-schema resolution)
                 while (auto arrayType = cast(ArrayType) schema)
                 {
@@ -429,7 +431,7 @@ class Render
                 }
                 if (auto stringType = cast(StringType) schema)
                 {
-                    if (!stringType.enum_.empty || target.keyToTypeName.endsWith("Id")) return null;
+                    if (!stringType.enum_.empty || typeName.endsWith("Id")) return null;
                 }
                 else if (cast(BooleanType) schema || cast(NumberType) schema || cast(IntegerType) schema)
                 {

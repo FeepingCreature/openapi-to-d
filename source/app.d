@@ -51,6 +51,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     // to work around https://github.com/APIDevTools/swagger-cli/issues/59
     auto allKeysSet = keysInOrder
         .filter!(key => !cast(Reference) schemas[key].pickBestType)
+        .filter!(key => config.schemas.get(key.keyToTypeName, SchemaConfig()).include)
         .map!(key => tuple!("key", "value")(key.keyToTypeName, true))
         .assocArray;
 

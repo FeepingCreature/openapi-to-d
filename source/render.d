@@ -412,9 +412,14 @@ class Render
             {
                 if (!reference.target.canFind("#/")) return null;
 
-                const target = reference.target.find("#/").drop("#/".length);
+                const target = reference.target.keyToTypeName;
 
                 if (target !in this.schemas) return null;
+
+                if (!matchingImports(target).empty)
+                {
+                    return null;
+                }
 
                 auto schema = this.schemas[target].pickBestType;
                 // TODO factor out into helper (compare app.d toplevel simple-schema resolution)
@@ -771,33 +776,18 @@ private const(ValueParameter) resolveParameter(const Parameter param, const Para
 
 alias Resolution = Tuple!(string, "typeName", Nullable!string, "import_");
 
-__gshared Resolution[string] referenceCache;
-__gshared Object referenceCacheLock;
+__gshared const(string)[][string] moduleCache;
+__gshared Object moduleCacheLock;
 
 shared static this()
 {
-    referenceCacheLock = new Object;
+    moduleCacheLock = new Object;
 }
 
 private Resolution resolveReference(const Reference reference)
 {
-    synchronized (referenceCacheLock)
-    {
-        if (auto ptr = reference.toString in referenceCache)
-        {
-            return *ptr;
-        }
-    }
-
     const typeName = reference.target.keyToTypeName;
-    const matchingImports = dirEntries("src", "*.d", SpanMode.depth)
-        .chain(dirEntries("include", "*.d", SpanMode.depth))
-        .filter!(file => !file.name.endsWith("Test.d"))
-        .map!(a => a.readText)
-        .filter!(a => a.canFind(format!"struct %s\n"(typeName))
-            || a.canFind(format!"enum %s\n"(typeName)))
-        .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
-        .array;
+    const matchingImports = .matchingImports(typeName);
 
     if (matchingImports.empty)
     {
@@ -810,13 +800,33 @@ private Resolution resolveReference(const Reference reference)
             reference.target, matchingImports, matchingImports.front);
     }
 
-    const resolution = Resolution(typeName, matchingImports.empty ? Nullable!string() : matchingImports.front.nullable);
+    return Resolution(typeName, matchingImports.empty ? Nullable!string() : matchingImports.front.nullable);
+}
 
-    synchronized (referenceCacheLock)
+private const(string)[] matchingImports(const string typeName)
+{
+    synchronized (moduleCacheLock)
     {
-        referenceCache[reference.toString] = resolution;
+        if (auto ptr = typeName in moduleCache)
+        {
+            return *ptr;
+        }
     }
-    return resolution;
+
+    const matches = dirEntries("src", "*.d", SpanMode.depth)
+        .chain(dirEntries("include", "*.d", SpanMode.depth))
+        .filter!(file => !file.name.endsWith("Test.d"))
+        .map!(a => a.readText)
+        .filter!(a => a.canFind(format!"struct %s\n"(typeName))
+            || a.canFind(format!"enum %s\n"(typeName)))
+        .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
+        .array;
+
+    synchronized (moduleCacheLock)
+    {
+        moduleCache[typeName] = matches;
+    }
+    return matches;
 }
 
 private string renderComment(string comment, int indent, string source)

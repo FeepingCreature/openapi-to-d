@@ -778,18 +778,18 @@ private const(ValueParameter) resolveParameter(const Parameter param, const Para
 
 alias Resolution = Tuple!(string, "typeName", Nullable!string, "import_");
 
-__gshared const(string)[string] fileCache;
+__gshared const(string)[] allFiles;
 __gshared const(string)[][string] moduleCache;
 __gshared Object cacheLock;
 
 shared static this()
 {
     cacheLock = new Object;
-    fileCache = dirEntries("src", "*.d", SpanMode.depth)
+    allFiles = dirEntries("src", "*.d", SpanMode.depth)
         .chain(dirEntries("include", "*.d", SpanMode.depth))
         .filter!(file => !file.name.endsWith("Test.d"))
-        .map!(a => tuple!("key", "value")(a.name.idup, a.readText))
-        .assocArray;
+        .map!(a => a.readText)
+        .array;
 }
 
 private Resolution resolveReference(const Reference reference)
@@ -820,8 +820,7 @@ private const(string)[] matchingImports(const string typeName)
             return *ptr;
         }
 
-        const matches = fileCache
-            .byValue
+        const matches = allFiles
             .filter!(a => a.canFind(format!"struct %s\n"(typeName))
                 || a.canFind(format!"enum %s\n"(typeName)))
             .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)

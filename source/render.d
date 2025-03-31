@@ -242,7 +242,7 @@ class Render
         {
             result ~= format!"    %s\n\n"(extra);
         }
-        if (!objectType.required.empty)
+        if (!objectType.required.filter!(a => config.properties.empty || config.properties.canFind(a)).empty)
         {
             // disabling this() on a struct with all-optional fields
             // results in an unconstructable type

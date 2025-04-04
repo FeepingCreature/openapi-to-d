@@ -29,6 +29,8 @@ class Render
 
     string modulePrefix;
 
+    string[string] redirected;
+
     bool[string] typesBeingGenerated;
 
     // for resolving references when inlining
@@ -673,6 +675,10 @@ class Render
     Tuple!(string, "typeName", Nullable!string, "import_") resolveReference(const Reference reference)
     {
         const typeName = reference.target.keyToTypeName;
+        if (typeName in this.redirected)
+        {
+            return typeof(return)(typeName, this.redirected[typeName].nullable);
+        }
         if (typeName in this.typesBeingGenerated)
         {
             return typeof(return)(typeName, Nullable!string(this.modulePrefix ~ "." ~ typeName));

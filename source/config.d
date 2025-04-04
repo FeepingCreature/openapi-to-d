@@ -60,6 +60,9 @@ struct SchemaConfig
     @(This.Default!true)
     bool isEventType = true;
 
+    @(This.Default)
+    Nullable!string module_;
+
     mixin(GenerateAll);
 }
 

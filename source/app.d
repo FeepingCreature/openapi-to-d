@@ -36,6 +36,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
     Type[][string] schemas;
     string[] keysInOrder;
     OpenApiFile[] files = config.source.map!(a => loader.load(a)).array;
+    string[string] redirects;
 
     foreach (file; files)
     {
@@ -54,6 +55,11 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         .filter!(key => config.schemas.get(key.keyToTypeName, SchemaConfig()).include)
         .map!(key => tuple!("key", "value")(key.keyToTypeName, true))
         .assocArray;
+    foreach (key, schema; config.schemas)
+    {
+        if (schema.module_.isNull) continue;
+        redirects[key] = schema.module_.get;
+    }
 
     // write domain files
     foreach (key; keysInOrder)
@@ -63,7 +69,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
         const name = key.keyToTypeName;
         auto schemaConfig = config.schemas.get(name, SchemaConfig());
 
-        if (!schemaConfig.include)
+        if (!schemaConfig.include || !schemaConfig.module_.isNull)
             continue;
 
         while (auto arrayType = cast(ArrayType) type)
@@ -71,7 +77,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             type = arrayType.items;
         }
 
-        auto render = new Render(config.componentFolder.pathToModule, allKeysSet, schemas);
+        auto render = new Render(config.componentFolder.pathToModule, redirects, allKeysSet, schemas);
 
         bool rendered = false;
 
@@ -186,7 +192,7 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             const outputPath = buildPath(config.serviceFolder, name ~ ".d");
             auto outputFile = File(outputPath, "w");
 
-            auto render = new Render(config.componentFolder.pathToModule, allKeysSet, schemas);
+            auto render = new Render(config.componentFolder.pathToModule, redirects, allKeysSet, schemas);
 
             render.types ~= render.renderRoutes(name, file.path, file.description, routes, file.parameters);
 

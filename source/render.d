@@ -426,10 +426,12 @@ class Render
                 }
 
                 auto schema = this.schemas[targetSchema].pickBestType;
+                string inlineModifier = modifier;
                 // TODO factor out into helper (compare app.d toplevel simple-schema resolution)
                 while (auto arrayType = cast(ArrayType) schema)
                 {
                     schema = arrayType.items;
+                    inlineModifier ~= "[]";
                 }
                 if (auto stringType = cast(StringType) schema)
                 {
@@ -445,7 +447,7 @@ class Render
                 }
 
                 // inline alias
-                return renderMember(name, schema, optional, allowNull, extraTypes, modifier);
+                return renderMember(name, schema, optional, allowNull, extraTypes, inlineModifier);
             }
 
             if (auto result = tryInline)

@@ -830,7 +830,8 @@ private const(string)[] matchingImports(const string typeName)
 
         const matches = allFiles
             .filter!(a => a.canFind(format!"struct %s\n"(typeName))
-                || a.canFind(format!"enum %s\n"(typeName)))
+                || a.canFind(format!"enum %s\n"(typeName))
+                || a.canFind(format!"alias %s "(typeName)))
             .map!(a => a.find("module ").drop("module ".length).until(";").toUTF8)
             .array;
 

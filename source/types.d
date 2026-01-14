@@ -6,6 +6,7 @@ import std.array;
 import std.format;
 import std.json;
 import std.range;
+import std.sumtype : SumType;
 import std.typecons;
 import text.json.Decode;
 import ToJson;
@@ -81,9 +82,16 @@ in (value.type == JSONType.array)
     assert(false, format!"I don't know what this is: %s"(value));
 }
 
-AdditionalProperties decode(T : AdditionalProperties)(const JSONValue value)
-in (value.type == JSONType.array)
+SumType!(AdditionalProperties, AnyAdditionalProperties) decode(
+    T : SumType!(AdditionalProperties, AnyAdditionalProperties))
+(const JSONValue value)
+in (value.type == JSONType.array || value == JSONValue(true))
 {
+    if (value == JSONValue(true))
+    {
+        return typeof(return)(new AnyAdditionalProperties());
+    }
+
     auto type = decode!Type(value);
     auto additionalProperties = Nullable!int();
 
@@ -91,11 +99,11 @@ in (value.type == JSONType.array)
     {
         additionalProperties = value.getEntry("minProperties").decodeJson!int;
     }
-    return new AdditionalProperties(type, additionalProperties);
+    return typeof(return)(new AdditionalProperties(type, additionalProperties));
 }
 
 private alias _ = decode!Type;
-private alias _ = decode!AdditionalProperties;
+private alias _ = decode!(SumType!(AdditionalProperties, AnyAdditionalProperties));
 
 struct TableEntry(T)
 {
@@ -115,7 +123,7 @@ class ObjectType : Type
     string[] required;
 
     @(This.Default)
-    Nullable!AdditionalProperties additionalProperties;
+    Nullable!(SumType!(AdditionalProperties, AnyAdditionalProperties)) additionalProperties;
 
     override void setSource(string source)
     {
@@ -154,6 +162,10 @@ class ObjectType : Type
 }
 
 private alias frontOrNull = range => range.empty ? Nullable!(ElementType!(typeof(range)))() : range.front.nullable;
+
+class AnyAdditionalProperties
+{
+}
 
 class AdditionalProperties
 {

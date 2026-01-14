@@ -14,6 +14,7 @@ import std.path;
 import std.range;
 import std.stdio;
 import std.string;
+import std.sumtype : match;
 import std.typecons;
 import std.uni;
 import std.utf;
@@ -222,16 +223,30 @@ class Render
         }
         if (!objectType.additionalProperties.isNull)
         {
-            Type elementType = objectType.additionalProperties.get.type;
-            Nullable!int minProperties = objectType.additionalProperties.get.minProperties;
-            const optional = false, allowNull = true;
-
-            members ~= renderMember("additionalProperties", elementType, optional, allowNull, extraTypes, "[string]");
-            members ~= "\n";
-            if (!minProperties.isNull)
+            void handleAdditionalProperties(AdditionalProperties additionalProperties)
+            in (additionalProperties !is null)
             {
-                invariants ~= format!"this.additionalProperties.length >= %s"(minProperties.get);
+                Type elementType = additionalProperties.type;
+                Nullable!int minProperties = additionalProperties.minProperties;
+                const optional = false, allowNull = true;
+
+                members ~= renderMember("additionalProperties", elementType, optional, allowNull, extraTypes, "[string]");
+                members ~= "\n";
+                if (!minProperties.isNull)
+                {
+                    invariants ~= format!"this.additionalProperties.length >= %s"(minProperties.get);
+                }
             }
+            void handleAnyAdditionalProperties(AnyAdditionalProperties anyAdditionalProperties)
+            in (anyAdditionalProperties !is null)
+            {
+                auto jsonValueType = new Reference("JSONValue");
+                const optional = false, allowNull = true;
+
+                members ~= renderMember("additionalProperties", jsonValueType, optional, allowNull, extraTypes);
+                members ~= "\n";
+            }
+            objectType.additionalProperties.get.match!(handleAdditionalProperties, handleAnyAdditionalProperties);
         }
 
         result ~= extraTypes;
@@ -364,8 +379,12 @@ class Render
         {
             if (objectType.properties.empty)
             {
+                const typedAdditionalProperties = objectType.additionalProperties.apply!(a => a.match!(
+                    (AdditionalProperties a) => Nullable!AdditionalProperties(a),
+                    (AnyAdditionalProperties a) => Nullable!AdditionalProperties()));
+
                 // string[string] object
-                if (objectType.additionalProperties.apply!(a => cast(StringType) a.type !is null).get(false))
+                if (typedAdditionalProperties.apply!(a => cast(StringType) a.type !is null).get(false))
                 {
                     string prefix = null;
                     string typeStr = "string[string]";
@@ -374,7 +393,7 @@ class Render
                         prefix ~= "    @(This.Default)\n";
                         typeStr = nullableType("string", "[string]", allowNull);
                     }
-                    if (objectType.additionalProperties.get.minProperties.apply!(a => a == 1).get(false))
+                    if (typedAdditionalProperties.get.minProperties.apply!(a => a == 1).get(false))
                     {
                         prefix ~= "    @NonEmpty\n";
                     }

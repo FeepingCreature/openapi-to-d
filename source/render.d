@@ -663,11 +663,14 @@ class Render
             }
             const string returnType = typeToString(responseType);
 
+            if (route.method != "get")
+            {
+                dParameters ~= "const Context context";
+            }
+
             lines ~= linebreak((4).spaces, (8).spaces, [
                 format!"public %s %s("(returnType, route.operationId),
-            ] ~ dParameters.map!(a => a ~ ", ").array ~ [
-                "const Context context);"
-            ]);
+            ] ~ dParameters.join(", ") ~ [");"]);
         }
         lines ~= "}";
         // retro to counteract retro in app.d (sorry)
@@ -812,11 +815,14 @@ __gshared Object cacheLock;
 shared static this()
 {
     cacheLock = new Object;
-    allFiles = dirEntries("src", "*.d", SpanMode.depth)
-        .chain(dirEntries("include", "*.d", SpanMode.depth))
-        .filter!(file => !file.name.endsWith("Test.d"))
-        .map!(a => a.readText)
-        .array;
+    if ("src".exists)
+    {
+        allFiles = dirEntries("src", "*.d", SpanMode.depth)
+            .chain(dirEntries("include", "*.d", SpanMode.depth))
+            .filter!(file => !file.name.endsWith("Test.d"))
+            .map!(a => a.readText)
+            .array;
+    }
 }
 
 private Resolution resolveReference(const Reference reference)

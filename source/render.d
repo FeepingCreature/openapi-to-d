@@ -309,6 +309,14 @@ class Render
     string renderMember(string name, Type type, bool optional, bool allowNull, ref string extraTypes,
         string modifier = "")
     {
+        if (auto allOf = cast(AllOf) type)
+        {
+            // trivial passthrough allOf, dissolve
+            if (allOf.children.length == 1 && cast(Reference) allOf.children[0])
+            {
+                type = allOf.children[0];
+            }
+        }
         if (auto booleanType = cast(BooleanType) type)
         {
             if (optional)

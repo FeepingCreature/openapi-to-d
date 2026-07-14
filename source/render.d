@@ -34,6 +34,8 @@ class Render
 
     bool[string] typesBeingGenerated;
 
+    string[] ignorePrefixes;
+
     // for resolving references when inlining
     Type[][string] schemas;
 
@@ -447,7 +449,7 @@ class Render
 
                 const typeName = reference.target.keyToTypeName;
 
-                if (!matchingImports(typeName).empty)
+                if (!matchingImports(typeName, this.ignorePrefixes).empty)
                 {
                     return null;
                 }
@@ -715,7 +717,7 @@ class Render
         {
             return typeof(return)(typeName, Nullable!string(this.modulePrefix ~ "." ~ typeName));
         }
-        return .resolveReference(reference);
+        return .resolveReference(reference, this.ignorePrefixes);
     }
 
     private string nullableType(string type, string modifier, bool allowNullInit)
@@ -833,10 +835,10 @@ shared static this()
     }
 }
 
-private Resolution resolveReference(const Reference reference)
+private Resolution resolveReference(const Reference reference, const string[] ignorePrefixes)
 {
     const typeName = reference.target.keyToTypeName;
-    const matchingImports = .matchingImports(typeName);
+    const matchingImports = .matchingImports(typeName, ignorePrefixes);
 
     if (matchingImports.empty)
     {
@@ -852,13 +854,13 @@ private Resolution resolveReference(const Reference reference)
     return Resolution(typeName, matchingImports.empty ? Nullable!string() : matchingImports.front.nullable);
 }
 
-private const(string)[] matchingImports(const string typeName)
+private const(string)[] matchingImports(const string typeName, const string[] ignorePrefixes)
 {
     synchronized (cacheLock)
     {
         if (auto ptr = typeName in moduleCache)
         {
-            return *ptr;
+            return (*ptr).filter!(a => !ignorePrefixes.any!(prefix => a.startsWith(prefix))).array;
         }
 
         const matches = allFiles
@@ -869,7 +871,7 @@ private const(string)[] matchingImports(const string typeName)
             .array;
 
         moduleCache[typeName] = matches;
-        return matches;
+        return matches.filter!(a => !ignorePrefixes.any!(prefix => a.startsWith(prefix))).array;
     }
 }
 

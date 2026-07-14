@@ -37,6 +37,10 @@ struct Config
     @(This.Default)
     string serviceFolder;
 
+    // Folders to ignore for finding types
+    @(This.Default)
+    string[] ignorePrefixes;
+
     @(This.Default)
     SchemaConfig[string] schemas;
 

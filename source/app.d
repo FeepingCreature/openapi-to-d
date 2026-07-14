@@ -77,7 +77,8 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             type = arrayType.items;
         }
 
-        auto render = new Render(config.componentFolder.pathToModule, redirects, allKeysSet, schemas);
+        auto render = new Render(config.componentFolder.pathToModule, redirects, allKeysSet,
+            config.ignorePrefixes, schemas);
 
         bool rendered = false;
 
@@ -192,7 +193,8 @@ mixin CLI!Arguments.main!((const Arguments arguments)
             const outputPath = buildPath(config.serviceFolder, name ~ ".d");
             auto outputFile = File(outputPath, "w");
 
-            auto render = new Render(config.componentFolder.pathToModule, redirects, allKeysSet, schemas);
+            auto render = new Render(config.componentFolder.pathToModule, redirects, allKeysSet,
+                config.ignorePrefixes, schemas);
 
             render.types ~= render.renderRoutes(name, file.path, file.description, routes, file.parameters);
 

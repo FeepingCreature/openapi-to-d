@@ -31,7 +31,7 @@ abstract class Parameter
     mixin(GenerateAll);
 }
 
-class ValueParameter : Parameter
+class UntypedValueParameter : Parameter
 {
     string in_;
 
@@ -40,10 +40,15 @@ class ValueParameter : Parameter
 
     string name;
 
-    Type schema;
-
     @(This.Default)
     Nullable!bool required;
+
+    mixin(GenerateAll);
+}
+
+class ValueParameter : UntypedValueParameter
+{
+    Type schema;
 
     mixin(GenerateAll);
 }
@@ -71,6 +76,14 @@ in (value.type == JSONType.array)
     if (value.hasKey("$ref"))
     {
         return new RefParameter(value.getEntry("$ref").decodeJson!string);
+    }
+    // will fall back to string
+    if (value.getEntry("schema") == JSONValue(JSONValue[].init))
+    {
+        with (value.toObject.decodeJson!(UntypedValueParameter, types.decode))
+        {
+            return new ValueParameter(in_, name, new StringType, description, required);
+        }
     }
     return value.toObject.decodeJson!(ValueParameter, types.decode);
 }

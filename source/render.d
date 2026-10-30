@@ -147,6 +147,7 @@ class Render
                     }
                 }
 
+                string aliasFieldName = null;
                 foreach (child; children)
                 {
                     if (auto obj = cast(ObjectType) child)
@@ -157,7 +158,15 @@ class Render
                     else if (auto refChild = cast(Reference) child)
                     {
                         if (refChild is refWithMostProperties)
+                        {
+                            // Emit the alias-this field where the $ref appears in the allOf list,
+                            // so the field/constructor order follows the YAML order.
+                            aliasFieldName = refChild.target.keyToTypeName.asFieldName;
+
+                            substitute.properties ~= TableEntry!Type(aliasFieldName, refChild);
+                            substitute.required ~= aliasFieldName;
                             continue;
+                        }
                         if (!refChild.target.canFind("#/"))
                         {
                             stderr.writefln!"Don't understand reference target %s"(refChild.target);
@@ -182,12 +191,8 @@ class Render
                 }
                 if (refWithMostProperties)
                 {
-                    // use it for the alias-this reference
-                    const fieldName = refWithMostProperties.target.keyToTypeName.asFieldName;
-
-                    substitute.properties ~= TableEntry!Type(fieldName, refWithMostProperties);
-                    substitute.required ~= fieldName;
-                    extra = format!"alias %s this;"(fieldName);
+                    assert(aliasFieldName !is null);
+                    extra = format!"alias %s this;"(aliasFieldName);
                 }
                 return renderStruct(name, substitute, config, description, extra);
             }
